@@ -1,0 +1,1199 @@
+########## Code from: /var/www/html/timelimits/client_ip.json ##########
+{
+    "PC1": {
+        "client_ip": "192.168.86.59",
+        "last_seen": 1732997115
+    },
+    "PC2": {
+        "client_ip": "192.168.86.60",
+        "last_seen": 1732847213
+    }
+}
+
+
+########## Code from: /var/www/html/timelimits/client.py ##########
+import logging
+import subprocess
+import time
+import socket
+import json
+import threading
+
+# Server details
+SERVER_IP = "192.168.86.10"
+SERVER_PORT = 80
+CLIENT_NAME = "PC1"
+
+# Heartbeat interval
+HEARTBEAT_INTERVAL = 60
+
+# States
+manual_pause = False
+
+# Configure logging
+logging.basicConfig(
+    level=logging.DEBUG,
+    format="%(asctime)s %(levelname)s: %(message)s",
+    handlers=[
+        logging.FileHandler("client.log"),
+        logging.StreamHandler()
+    ]
+)
+
+# Firewall rules
+ALLOW_SERVER_RULE = "AllowServerCommunication"
+BLOCK_ALL_RULE = "BlockAll"
+
+def execute_firewall_command(command):
+    """Execute a netsh firewall command and log the results."""
+    try:
+        result = subprocess.run(command, capture_output=True, text=True, shell=True)
+        if result.returncode == 0:
+            logging.info(f"Firewall command executed successfully: {command}")
+        else:
+            logging.error(f"Failed to execute firewall command: {command}. Error: {result.stderr.strip()}")
+    except Exception as e:
+        logging.error(f"Exception occurred while executing firewall command: {command}. Error: {str(e)}")
+
+def reset_firewall():
+    """Reset firewall and configure server communication rule."""
+    logging.info("Resetting all firewall rules...")
+    execute_firewall_command("netsh advfirewall reset")
+    configure_server_communication_rule()
+
+def configure_server_communication_rule():
+    """Ensure the firewall always allows communication with the server."""
+    logging.info("Configuring persistent server communication rule...")
+    execute_firewall_command(f"netsh advfirewall firewall delete rule name={ALLOW_SERVER_RULE}")
+    execute_firewall_command(
+        f"netsh advfirewall firewall add rule name={ALLOW_SERVER_RULE} "
+        f"dir=in action=allow remoteip={SERVER_IP} protocol=any"
+    )
+    execute_firewall_command(
+        f"netsh advfirewall firewall add rule name={ALLOW_SERVER_RULE} "
+        f"dir=out action=allow remoteip={SERVER_IP} protocol=any"
+    )
+
+def block_internet():
+    """Block all internet access except to the server."""
+    logging.info("Blocking all internet access...")
+    execute_firewall_command(f"netsh advfirewall firewall delete rule name={BLOCK_ALL_RULE}")
+    execute_firewall_command(
+        f"netsh advfirewall firewall add rule name={BLOCK_ALL_RULE} dir=out action=block remoteip=0.0.0.0-255.255.255.255"
+    )
+
+def unblock_internet():
+    """Unblock all internet access."""
+    logging.info("Unblocking all internet access...")
+    execute_firewall_command(f"netsh advfirewall firewall delete rule name={BLOCK_ALL_RULE}")
+
+def send_heartbeat():
+    """Send a periodic heartbeat to the server."""
+    while True:
+        try:
+            data = json.dumps({"client_ip": socket.gethostbyname(socket.gethostname()), "name": CLIENT_NAME})
+            logging.debug(f"Sending heartbeat to server: {data}")
+            response = requests.post(f"http://{SERVER_IP}/timelimits/heartbeat.php", data=data)
+            if response.status_code == 200:
+                logging.info(f"Server response: {response.text}")
+            else:
+                logging.error(f"Failed to send heartbeat. Server responded with status: {response.status_code}")
+        except Exception as e:
+            logging.error(f"Error while sending heartbeat: {str(e)}")
+        time.sleep(HEARTBEAT_INTERVAL)
+
+def listen_for_commands():
+    """Listen for commands from the server."""
+    global manual_pause
+    logging.info("Listening for commands on port 65432...")
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.bind(("", 65432))
+            s.listen()
+            logging.info("Socket successfully created and listening...")
+            while True:
+                conn, addr = s.accept()
+                logging.info(f"Connected by {addr}")
+                data = conn.recv(1024).decode("utf-8").strip()
+                logging.debug(f"Data received from server: {data}")
+                if data == "pause":
+                    logging.info("Received command: pause")
+                    manual_pause = True
+                    block_internet()
+                elif data == "unpause":
+                    if manual_pause:
+                        logging.info("Manual pause is active; ignoring unpause outside schedule.")
+                        manual_pause = False
+                    else:
+                        logging.info("Received command: unpause")
+                        unblock_internet()
+                conn.sendall(b"OK")
+    except Exception as e:
+        logging.error(f"Error in listen_for_commands: {str(e)}")
+
+def main():
+    reset_firewall()
+    threading.Thread(target=send_heartbeat, daemon=True).start()
+    listen_for_commands()
+
+if __name__ == "__main__":
+    main()
+
+
+
+########## Code from: /var/www/html/timelimits/combine_code.sh ##########
+#!/bin/bash
+
+# Directory to scan
+TARGET_DIR="/var/www/html/timelimits"
+
+# Output file
+OUTPUT_FILE="combined_code.txt"
+
+# Clear the output file if it exists
+> "$OUTPUT_FILE"
+
+# Iterate over files in the target directory
+for file in "$TARGET_DIR"/*; do
+    # Skip directories
+    if [ -d "$file" ]; then
+        continue
+    fi
+
+    # Skip files with "old", "back", or compressed file extensions
+    if [[ "$file" == *"old"* || "$file" == *"back"* || "$file" =~ \.(zip|gz|tar|bz2|7z)$ ]]; then
+        continue
+    fi
+
+    # Skip the output file itself
+    if [[ "$file" == *"$OUTPUT_FILE"* ]]; then
+        continue
+    fi
+
+    # Append a header to indicate which file the code came from
+    echo "########## Code from: $file ##########" >> "$OUTPUT_FILE"
+
+    # Append the file's contents to the output file
+    cat "$file" >> "$OUTPUT_FILE"
+
+    # Add a separator for clarity
+    echo -e "\n\n" >> "$OUTPUT_FILE"
+done
+
+echo "Combined code has been saved to $OUTPUT_FILE."
+
+
+
+########## Code from: /var/www/html/timelimits/command_log.txt ##########
+Connection to 192.168.86.59:65432 failed: Connection timed out
+Connection to 192.168.86.59:65432 failed: Connection timed out
+Command 'unpause' sent to 192.168.86.59. Response: 
+Command 'unpause' sent to 192.168.86.59. Response: 
+Command 'pause' sent to 192.168.86.59. Response: 
+Command 'pause' sent to 192.168.86.59. Response: 
+Command 'pause' sent to 192.168.86.59. Response: 
+Command 'unpause' sent to 192.168.86.59. Response: 
+Command 'pause' sent to 192.168.86.59. Response: Internet access blocked.
+
+Command 'pause' sent to 192.168.86.59. Response: Internet access blocked.
+
+Command 'unpause' sent to 192.168.86.59. Response: Internet access unblocked.
+
+Connection to 192.168.86.59:65432 failed: Connection timed out
+Command 'pause' sent to 192.168.86.59. Response: Command executed.
+Command 'unpause' sent to 192.168.86.59. Response: Command executed.
+Command 'unpause' sent to 192.168.86.59. Response: 
+Command 'pause' sent to 192.168.86.59. Response: 
+Command 'unpause' sent to 192.168.86.59. Response: 
+Command 'pause' sent to 192.168.86.59. Response: 
+Command 'unpause' sent to 192.168.86.59. Response: 
+Command 'pause' sent to 192.168.86.59. Response: 
+Command 'unpause' sent to 192.168.86.59. Response: Internet unpaused.
+Command 'pause' sent to 192.168.86.59. Response: Internet paused.
+Command 'pause' sent to 192.168.86.59. Response: 
+Command 'pause' sent to 192.168.86.59. Response: 
+Command 'unpause' sent to 192.168.86.59. Response: 
+Command 'pause' sent to 192.168.86.59. Response: 
+Command 'unpause' sent to 192.168.86.59. Response: 
+Command 'pause' sent to 192.168.86.59. Response: 
+Command 'pause' sent to 192.168.86.59. Response: 
+Connection to 192.168.86.59:65432 failed: Connection timed out
+Command 'pause' sent to 192.168.86.59. Response: 
+Command 'unpause' sent to 192.168.86.59. Response: 
+Command 'pause' sent to 192.168.86.59. Response: 
+Command 'unpause' sent to 192.168.86.59. Response: 
+Command 'pause' sent to 192.168.86.59. Response: 
+Command 'unpause' sent to 192.168.86.59. Response: 
+Command 'pause' sent to 192.168.86.59. Response: 
+Command 'unpause' sent to 192.168.86.59. Response: 
+Command 'pause' sent to 192.168.86.59. Response: 
+
+
+
+########## Code from: /var/www/html/timelimits/enforce_schedule.log ##########
+[2024-11-29 15:17:31] Starting enforce_schedule execution...
+[2024-11-29 15:17:31] Loading schedule file...
+[2024-11-29 15:17:31] Schedule: {"disable_time":"21:41","enable_time":"21:42"}
+[2024-11-29 15:17:31] Loading status file...
+[2024-11-29 15:17:31] Status: {"status":"unpaused"}
+[2024-11-29 15:17:31] Loading client IPs...
+[2024-11-29 15:17:31] Clients: {"PC1":{"client_ip":"192.168.86.59","last_seen":1732847113}}
+[2024-11-29 15:17:31] Current time: 15:17
+[2024-11-29 15:17:31] Downtime is not active.
+[2024-11-29 15:17:31] enforce_schedule execution complete.
+[2024-11-29 15:17:31] Starting enforce_schedule execution...
+[2024-11-29 15:17:31] Loading schedule file...
+[2024-11-29 15:17:31] Schedule: {"disable_time":"21:41","enable_time":"21:42"}
+[2024-11-29 15:17:31] Loading status file...
+[2024-11-29 15:17:31] Status: {"status":"unpaused"}
+[2024-11-29 15:17:31] Loading client IPs...
+[2024-11-29 15:17:31] Clients: {"PC1":{"client_ip":"192.168.86.59","last_seen":1732847113}}
+[2024-11-29 15:17:31] Current time: 15:17
+[2024-11-29 15:17:31] Downtime is not active.
+[2024-11-29 15:17:31] enforce_schedule execution complete.
+[2024-11-29 15:17:31] Starting enforce_schedule execution...
+[2024-11-29 15:17:31] Loading schedule file...
+[2024-11-29 15:17:31] Schedule: {"disable_time":"21:41","enable_time":"21:42"}
+[2024-11-29 15:17:31] Loading status file...
+[2024-11-29 15:17:31] Status: {"status":"unpaused"}
+[2024-11-29 15:17:31] Loading client IPs...
+[2024-11-29 15:17:31] Clients: {"PC1":{"client_ip":"192.168.86.59","last_seen":1732847113}}
+[2024-11-29 15:17:31] Current time: 15:17
+[2024-11-29 15:17:31] Downtime is not active.
+[2024-11-29 15:17:31] enforce_schedule execution complete.
+[2024-11-29 15:17:31] Starting enforce_schedule execution...
+[2024-11-29 15:17:31] Loading schedule file...
+[2024-11-29 15:17:31] Schedule: {"disable_time":"21:41","enable_time":"21:42"}
+[2024-11-29 15:17:31] Loading status file...
+[2024-11-29 15:17:31] Status: {"status":"unpaused"}
+[2024-11-29 15:17:31] Loading client IPs...
+[2024-11-29 15:17:31] Clients: {"PC1":{"client_ip":"192.168.86.59","last_seen":1732847113}}
+[2024-11-29 15:17:31] Current time: 15:17
+[2024-11-29 15:17:31] Downtime is not active.
+[2024-11-29 15:17:31] enforce_schedule execution complete.
+[2024-11-29 15:17:31] Starting enforce_schedule execution...
+[2024-11-29 15:17:31] Loading schedule file...
+[2024-11-29 15:17:31] Schedule: {"disable_time":"21:41","enable_time":"21:42"}
+[2024-11-29 15:17:31] Loading status file...
+[2024-11-29 15:17:31] Status: {"status":"unpaused"}
+[2024-11-29 15:17:31] Loading client IPs...
+[2024-11-29 15:17:31] Clients: {"PC1":{"client_ip":"192.168.86.59","last_seen":1732847113}}
+[2024-11-29 15:17:31] Current time: 15:17
+[2024-11-29 15:17:31] Downtime is not active.
+[2024-11-29 15:17:31] enforce_schedule execution complete.
+[2024-11-29 15:18:37] Starting enforce_schedule execution...
+[2024-11-29 15:18:37] Starting enforce_schedule execution...
+[2024-11-29 15:18:37] Starting enforce_schedule execution...
+[2024-11-29 15:18:37] Loading schedule file...
+[2024-11-29 15:18:37] Starting enforce_schedule execution...
+[2024-11-29 15:18:37] Loading schedule file...
+[2024-11-29 15:18:37] Loading schedule file...
+[2024-11-29 15:18:37] Loading schedule file...
+[2024-11-29 15:18:37] Schedule: {"disable_time":"21:41","enable_time":"21:42"}
+[2024-11-29 15:18:37] Schedule: {"disable_time":"21:41","enable_time":"21:42"}
+[2024-11-29 15:18:37] Schedule: {"disable_time":"21:41","enable_time":"21:42"}
+[2024-11-29 15:18:37] Loading status file...
+[2024-11-29 15:18:37] Schedule: {"disable_time":"21:41","enable_time":"21:42"}
+[2024-11-29 15:18:37] Loading status file...
+[2024-11-29 15:18:37] Loading status file...
+[2024-11-29 15:18:37] Loading status file...
+[2024-11-29 15:18:37] Status: {"status":"unpaused"}
+[2024-11-29 15:18:37] Status: {"status":"unpaused"}
+[2024-11-29 15:18:37] Loading client IPs...
+[2024-11-29 15:18:37] Status: {"status":"unpaused"}
+[2024-11-29 15:18:37] Status: {"status":"unpaused"}
+[2024-11-29 15:18:37] Loading client IPs...
+[2024-11-29 15:18:37] Loading client IPs...
+[2024-11-29 15:18:37] Loading client IPs...
+[2024-11-29 15:18:37] Clients: {"PC1":{"client_ip":"192.168.86.59","last_seen":1732847113}}
+[2024-11-29 15:18:37] Clients: {"PC1":{"client_ip":"192.168.86.59","last_seen":1732847113}}
+[2024-11-29 15:18:37] Current time: 15:18
+[2024-11-29 15:18:37] Clients: {"PC1":{"client_ip":"192.168.86.59","last_seen":1732847113}}
+[2024-11-29 15:18:37] Clients: {"PC1":{"client_ip":"192.168.86.59","last_seen":1732847113}}
+[2024-11-29 15:18:37] Current time: 15:18
+[2024-11-29 15:18:37] Downtime is not active.
+[2024-11-29 15:18:37] Downtime is not active.
+[2024-11-29 15:18:37] Current time: 15:18
+[2024-11-29 15:18:37] Current time: 15:18
+[2024-11-29 15:18:37] enforce_schedule execution complete.
+[2024-11-29 15:18:37] Downtime is not active.
+[2024-11-29 15:18:37] Downtime is not active.
+[2024-11-29 15:18:37] enforce_schedule execution complete.
+[2024-11-29 15:18:37] enforce_schedule execution complete.
+[2024-11-29 15:18:37] enforce_schedule execution complete.
+[2024-11-29 15:18:37] Starting enforce_schedule execution...
+[2024-11-29 15:18:37] Starting enforce_schedule execution...
+[2024-11-29 15:18:37] Loading schedule file...
+[2024-11-29 15:18:37] Loading schedule file...
+[2024-11-29 15:18:37] Starting enforce_schedule execution...
+[2024-11-29 15:18:37] Schedule: {"disable_time":"21:41","enable_time":"21:42"}
+[2024-11-29 15:18:37] Loading schedule file...
+[2024-11-29 15:18:37] Schedule: {"disable_time":"21:41","enable_time":"21:42"}
+[2024-11-29 15:18:37] Loading status file...
+[2024-11-29 15:18:37] Loading status file...
+[2024-11-29 15:18:37] Schedule: {"disable_time":"21:41","enable_time":"21:42"}
+[2024-11-29 15:18:37] Status: {"status":"unpaused"}
+[2024-11-29 15:18:37] Loading status file...
+[2024-11-29 15:18:37] Status: {"status":"unpaused"}
+[2024-11-29 15:18:37] Loading client IPs...
+[2024-11-29 15:18:37] Loading client IPs...
+[2024-11-29 15:18:37] Status: {"status":"unpaused"}
+[2024-11-29 15:18:37] Clients: {"PC1":{"client_ip":"192.168.86.59","last_seen":1732847113}}
+[2024-11-29 15:18:37] Loading client IPs...
+[2024-11-29 15:18:37] Clients: {"PC1":{"client_ip":"192.168.86.59","last_seen":1732847113}}
+[2024-11-29 15:18:37] Current time: 15:18
+[2024-11-29 15:18:37] Current time: 15:18
+[2024-11-29 15:18:37] Clients: {"PC1":{"client_ip":"192.168.86.59","last_seen":1732847113}}
+[2024-11-29 15:18:37] Downtime is not active.
+[2024-11-29 15:18:37] Downtime is not active.
+[2024-11-29 15:18:37] enforce_schedule execution complete.
+[2024-11-29 15:18:37] Current time: 15:18
+[2024-11-29 15:18:37] enforce_schedule execution complete.
+[2024-11-29 15:18:37] Downtime is not active.
+[2024-11-29 15:18:37] enforce_schedule execution complete.
+[2024-11-29 15:18:37] Starting enforce_schedule execution...
+[2024-11-29 15:18:37] Loading schedule file...
+[2024-11-29 15:18:37] Schedule: {"disable_time":"21:41","enable_time":"21:42"}
+[2024-11-29 15:18:37] Loading status file...
+[2024-11-29 15:18:37] Status: {"status":"unpaused"}
+[2024-11-29 15:18:37] Loading client IPs...
+[2024-11-29 15:18:37] Clients: {"PC1":{"client_ip":"192.168.86.59","last_seen":1732847113}}
+[2024-11-29 15:18:37] Current time: 15:18
+[2024-11-29 15:18:37] Downtime is not active.
+[2024-11-29 15:18:37] enforce_schedule execution complete.
+[2024-11-29 15:18:37] Starting enforce_schedule execution...
+[2024-11-29 15:18:37] Loading schedule file...
+[2024-11-29 15:18:37] Schedule: {"disable_time":"21:41","enable_time":"21:42"}
+[2024-11-29 15:18:37] Loading status file...
+[2024-11-29 15:18:37] Status: {"status":"unpaused"}
+[2024-11-29 15:18:37] Loading client IPs...
+[2024-11-29 15:18:37] Clients: {"PC1":{"client_ip":"192.168.86.59","last_seen":1732847113}}
+[2024-11-29 15:18:37] Current time: 15:18
+[2024-11-29 15:18:37] Downtime is not active.
+[2024-11-29 15:18:37] enforce_schedule execution complete.
+[2024-11-29 15:18:37] Starting enforce_schedule execution...
+[2024-11-29 15:18:37] Loading schedule file...
+[2024-11-29 15:18:37] Schedule: {"disable_time":"21:41","enable_time":"21:42"}
+[2024-11-29 15:18:37] Loading status file...
+[2024-11-29 15:18:37] Status: {"status":"unpaused"}
+[2024-11-29 15:18:37] Loading client IPs...
+[2024-11-29 15:18:37] Clients: {"PC1":{"client_ip":"192.168.86.59","last_seen":1732847113}}
+[2024-11-29 15:18:37] Current time: 15:18
+[2024-11-29 15:18:37] Downtime is not active.
+[2024-11-29 15:18:37] enforce_schedule execution complete.
+[2024-11-29 15:18:37] Starting enforce_schedule execution...
+[2024-11-29 15:18:37] Loading schedule file...
+[2024-11-29 15:18:37] Schedule: {"disable_time":"21:41","enable_time":"21:42"}
+[2024-11-29 15:18:37] Loading status file...
+[2024-11-29 15:18:37] Status: {"status":"unpaused"}
+[2024-11-29 15:18:37] Loading client IPs...
+[2024-11-29 15:18:37] Clients: {"PC1":{"client_ip":"192.168.86.59","last_seen":1732847113}}
+[2024-11-29 15:18:37] Current time: 15:18
+[2024-11-29 15:18:37] Downtime is not active.
+[2024-11-29 15:18:37] enforce_schedule execution complete.
+[2024-11-29 15:18:37] Starting enforce_schedule execution...
+[2024-11-29 15:18:37] Loading schedule file...
+[2024-11-29 15:18:37] Schedule: {"disable_time":"21:41","enable_time":"21:42"}
+[2024-11-29 15:18:37] Loading status file...
+[2024-11-29 15:18:37] Status: {"status":"unpaused"}
+[2024-11-29 15:18:37] Loading client IPs...
+[2024-11-29 15:18:37] Clients: {"PC1":{"client_ip":"192.168.86.59","last_seen":1732847113}}
+[2024-11-29 15:18:37] Current time: 15:18
+[2024-11-29 15:18:37] Downtime is not active.
+[2024-11-29 15:18:37] enforce_schedule execution complete.
+[2024-11-29 15:18:37] Starting enforce_schedule execution...
+[2024-11-29 15:18:37] Loading schedule file...
+[2024-11-29 15:18:37] Schedule: {"disable_time":"21:41","enable_time":"21:42"}
+[2024-11-29 15:18:37] Loading status file...
+[2024-11-29 15:18:37] Status: {"status":"unpaused"}
+[2024-11-29 15:18:37] Loading client IPs...
+[2024-11-29 15:18:37] Clients: {"PC1":{"client_ip":"192.168.86.59","last_seen":1732847113}}
+[2024-11-29 15:18:37] Current time: 15:18
+[2024-11-29 15:18:37] Downtime is not active.
+[2024-11-29 15:18:37] enforce_schedule execution complete.
+[2024-11-29 15:18:37] Starting enforce_schedule execution...
+[2024-11-29 15:18:37] Loading schedule file...
+[2024-11-29 15:18:37] Schedule: {"disable_time":"21:41","enable_time":"21:42"}
+[2024-11-29 15:18:37] Loading status file...
+[2024-11-29 15:18:37] Status: {"status":"unpaused"}
+[2024-11-29 15:18:37] Loading client IPs...
+[2024-11-29 15:18:37] Clients: {"PC1":{"client_ip":"192.168.86.59","last_seen":1732847113}}
+[2024-11-29 15:18:37] Current time: 15:18
+[2024-11-29 15:18:37] Downtime is not active.
+[2024-11-29 15:18:37] enforce_schedule execution complete.
+[2024-11-29 15:18:37] Starting enforce_schedule execution...
+[2024-11-29 15:18:37] Loading schedule file...
+[2024-11-29 15:18:37] Starting enforce_schedule execution...
+[2024-11-29 15:18:37] Loading schedule file...
+[2024-11-29 15:18:37] Schedule: {"disable_time":"21:41","enable_time":"21:42"}
+[2024-11-29 15:18:37] Loading status file...
+[2024-11-29 15:18:37] Schedule: {"disable_time":"21:41","enable_time":"21:42"}
+[2024-11-29 15:18:37] Status: {"status":"unpaused"}
+[2024-11-29 15:18:37] Loading status file...
+[2024-11-29 15:18:37] Loading client IPs...
+[2024-11-29 15:18:37] Status: null
+[2024-11-29 15:18:37] Clients: {"PC1":{"client_ip":"192.168.86.59","last_seen":1732847113}}
+[2024-11-29 15:18:37] Loading client IPs...
+[2024-11-29 15:18:37] Current time: 15:18
+[2024-11-29 15:18:37] Downtime is not active.
+[2024-11-29 15:18:37] Clients: {"PC1":{"client_ip":"192.168.86.59","last_seen":1732847113}}
+[2024-11-29 15:18:37] enforce_schedule execution complete.
+[2024-11-29 15:18:37] Current time: 15:18
+[2024-11-29 15:18:37] Downtime is not active.
+[2024-11-29 15:18:37] Starting enforce_schedule execution...
+[2024-11-29 15:18:37] Loading schedule file...
+[2024-11-29 15:18:37] Schedule: {"disable_time":"21:41","enable_time":"21:42"}
+[2024-11-29 15:18:37] Loading status file...
+[2024-11-29 15:18:37] Status: null
+[2024-11-29 15:18:37] Loading client IPs...
+[2024-11-29 15:18:37] Clients: {"PC1":{"client_ip":"192.168.86.59","last_seen":1732847113}}
+[2024-11-29 15:18:37] Current time: 15:18
+[2024-11-29 15:18:37] Downtime is not active.
+[2024-11-29 15:18:37] Internet resumed as downtime ended.
+[2024-11-29 15:18:37] Sending command 'unpause' to 192.168.86.59...
+[2024-11-29 15:18:37] Internet resumed as downtime ended.
+[2024-11-29 15:18:37] Starting enforce_schedule execution...
+[2024-11-29 15:18:37] Starting enforce_schedule execution...
+[2024-11-29 15:18:37] Sending command 'unpause' to 192.168.86.59...
+[2024-11-29 15:18:37] Loading schedule file...
+[2024-11-29 15:18:37] Loading schedule file...
+[2024-11-29 15:18:37] Starting enforce_schedule execution...
+[2024-11-29 15:18:37] Loading schedule file...
+[2024-11-29 15:18:37] Schedule: {"disable_time":"21:41","enable_time":"21:42"}
+[2024-11-29 15:18:37] Schedule: {"disable_time":"21:41","enable_time":"21:42"}
+[2024-11-29 15:18:37] Schedule: {"disable_time":"21:41","enable_time":"21:42"}
+[2024-11-29 15:18:37] Loading status file...
+[2024-11-29 15:18:37] Loading status file...
+[2024-11-29 15:18:37] Loading status file...
+[2024-11-29 15:18:37] Status: {"status":"unpaused"}
+[2024-11-29 15:18:37] Loading client IPs...
+[2024-11-29 15:18:37] Status: {"status":"unpaused"}
+[2024-11-29 15:18:37] Status: {"status":"unpaused"}
+[2024-11-29 15:18:37] Clients: {"PC1":{"client_ip":"192.168.86.59","last_seen":1732847113}}
+[2024-11-29 15:18:37] Loading client IPs...
+[2024-11-29 15:18:37] Loading client IPs...
+[2024-11-29 15:18:37] Current time: 15:18
+[2024-11-29 15:18:37] Downtime is not active.
+[2024-11-29 15:18:37] enforce_schedule execution complete.
+[2024-11-29 15:18:37] Clients: {"PC1":{"client_ip":"192.168.86.59","last_seen":1732847113}}
+[2024-11-29 15:18:37] Clients: {"PC1":{"client_ip":"192.168.86.59","last_seen":1732847113}}
+[2024-11-29 15:18:37] Current time: 15:18
+[2024-11-29 15:18:37] Current time: 15:18
+[2024-11-29 15:18:37] Downtime is not active.
+[2024-11-29 15:18:37] Downtime is not active.
+[2024-11-29 15:18:37] enforce_schedule execution complete.
+[2024-11-29 15:18:37] enforce_schedule execution complete.
+[2024-11-29 15:18:37] Starting enforce_schedule execution...
+[2024-11-29 15:18:37] Loading schedule file...
+[2024-11-29 15:18:37] Schedule: {"disable_time":"21:41","enable_time":"21:42"}
+[2024-11-29 15:18:37] Starting enforce_schedule execution...
+[2024-11-29 15:18:37] Loading status file...
+[2024-11-29 15:18:37] Loading schedule file...
+[2024-11-29 15:18:37] Schedule: {"disable_time":"21:41","enable_time":"21:42"}
+[2024-11-29 15:18:37] Loading status file...
+[2024-11-29 15:18:37] Status: {"status":"unpaused"}
+[2024-11-29 15:18:37] Status: {"status":"unpaused"}
+[2024-11-29 15:18:37] Starting enforce_schedule execution...
+[2024-11-29 15:18:37] Loading client IPs...
+[2024-11-29 15:18:37] Loading client IPs...
+[2024-11-29 15:18:37] Loading schedule file...
+[2024-11-29 15:18:37] Clients: {"PC1":{"client_ip":"192.168.86.59","last_seen":1732847113}}
+[2024-11-29 15:18:37] Current time: 15:18
+[2024-11-29 15:18:37] Clients: {"PC1":{"client_ip":"192.168.86.59","last_seen":1732847113}}
+[2024-11-29 15:18:37] Schedule: {"disable_time":"21:41","enable_time":"21:42"}
+[2024-11-29 15:18:37] Downtime is not active.
+[2024-11-29 15:18:37] Loading status file...
+[2024-11-29 15:18:37] Current time: 15:18
+[2024-11-29 15:18:37] Downtime is not active.
+[2024-11-29 15:18:37] enforce_schedule execution complete.
+[2024-11-29 15:18:37] Status: {"status":"unpaused"}
+[2024-11-29 15:18:37] Loading client IPs...
+[2024-11-29 15:18:37] enforce_schedule execution complete.
+[2024-11-29 15:18:37] Clients: {"PC1":{"client_ip":"192.168.86.59","last_seen":1732847113}}
+[2024-11-29 15:18:37] Current time: 15:18
+[2024-11-29 15:18:37] Downtime is not active.
+[2024-11-29 15:18:37] enforce_schedule execution complete.
+[2024-11-29 15:18:37] Response from 192.168.86.59: No response.
+[2024-11-29 15:18:37] enforce_schedule execution complete.
+[2024-11-29 15:18:37] Response from 192.168.86.59: No response.
+[2024-11-29 15:18:37] enforce_schedule execution complete.
+[2024-11-29 15:19:01] Starting enforce_schedule execution...
+[2024-11-29 15:19:01] Loading schedule file...
+[2024-11-29 15:19:01] Schedule: {"disable_time":"21:41","enable_time":"21:42"}
+[2024-11-29 15:19:01] Loading status file...
+[2024-11-29 15:19:01] Status: {"status":"unpaused"}
+[2024-11-29 15:19:01] Loading client IPs...
+[2024-11-29 15:19:01] Clients: {"PC1":{"client_ip":"192.168.86.59","last_seen":1732847113}}
+[2024-11-29 15:19:01] Current time: 15:19
+[2024-11-29 15:19:01] Downtime is not active.
+[2024-11-29 15:19:01] enforce_schedule execution complete.
+[2024-11-29 15:20:01] Starting enforce_schedule execution...
+[2024-11-29 15:20:01] Loading schedule file...
+[2024-11-29 15:20:01] Schedule: {"disable_time":"21:41","enable_time":"21:42"}
+[2024-11-29 15:20:01] Loading status file...
+[2024-11-29 15:20:01] Status: {"status":"unpaused"}
+[2024-11-29 15:20:01] Loading client IPs...
+[2024-11-29 15:20:01] Clients: {"PC1":{"client_ip":"192.168.86.59","last_seen":1732847113}}
+[2024-11-29 15:20:01] Current time: 15:20
+[2024-11-29 15:20:01] Downtime is not active.
+[2024-11-29 15:20:01] enforce_schedule execution complete.
+[2024-11-29 15:21:01] Starting enforce_schedule execution...
+[2024-11-29 15:21:01] Loading schedule file...
+[2024-11-29 15:21:01] Schedule: {"disable_time":"21:41","enable_time":"21:42"}
+[2024-11-29 15:21:01] Loading status file...
+[2024-11-29 15:21:01] Status: {"status":"unpaused"}
+[2024-11-29 15:21:01] Loading client IPs...
+[2024-11-29 15:21:01] Clients: {"PC1":{"client_ip":"192.168.86.59","last_seen":1732847113}}
+[2024-11-29 15:21:01] Current time: 15:21
+[2024-11-29 15:21:01] Downtime is not active.
+[2024-11-29 15:21:01] enforce_schedule execution complete.
+[2024-11-29 15:22:01] Starting enforce_schedule execution...
+[2024-11-29 15:22:01] Loading schedule file...
+[2024-11-29 15:22:01] Schedule: {"disable_time":"21:41","enable_time":"21:42"}
+[2024-11-29 15:22:01] Loading status file...
+[2024-11-29 15:22:01] Status: {"status":"unpaused"}
+[2024-11-29 15:22:01] Loading client IPs...
+[2024-11-29 15:22:01] Clients: {"PC1":{"client_ip":"192.168.86.59","last_seen":1732847113}}
+[2024-11-29 15:22:01] Current time: 15:22
+[2024-11-29 15:22:01] Downtime is not active.
+[2024-11-29 15:22:01] enforce_schedule execution complete.
+[2024-11-29 15:23:01] Starting enforce_schedule execution...
+[2024-11-29 15:23:01] Loading schedule file...
+[2024-11-29 15:23:01] Schedule: {"disable_time":"21:41","enable_time":"21:42"}
+[2024-11-29 15:23:01] Loading status file...
+[2024-11-29 15:23:01] Status: {"status":"unpaused"}
+[2024-11-29 15:23:01] Loading client IPs...
+[2024-11-29 15:23:01] Clients: {"PC1":{"client_ip":"192.168.86.59","last_seen":1732847113}}
+[2024-11-29 15:23:01] Current time: 15:23
+[2024-11-29 15:23:01] Downtime is not active.
+[2024-11-29 15:23:01] enforce_schedule execution complete.
+[2024-11-29 15:24:01] Starting enforce_schedule execution...
+[2024-11-29 15:24:01] Loading schedule file...
+[2024-11-29 15:24:01] Schedule: {"disable_time":"21:41","enable_time":"21:42"}
+[2024-11-29 15:24:01] Loading status file...
+[2024-11-29 15:24:01] Status: {"status":"unpaused"}
+[2024-11-29 15:24:01] Loading client IPs...
+[2024-11-29 15:24:01] Clients: {"PC1":{"client_ip":"192.168.86.59","last_seen":1732847113}}
+[2024-11-29 15:24:01] Current time: 15:24
+[2024-11-29 15:24:01] Downtime is not active.
+[2024-11-29 15:24:01] enforce_schedule execution complete.
+[2024-11-29 15:25:01] Starting enforce_schedule execution...
+[2024-11-29 15:25:01] Loading schedule file...
+[2024-11-29 15:25:01] Schedule: {"disable_time":"21:41","enable_time":"21:42"}
+[2024-11-29 15:25:01] Loading status file...
+[2024-11-29 15:25:01] Status: {"status":"unpaused"}
+[2024-11-29 15:25:01] Loading client IPs...
+[2024-11-29 15:25:01] Clients: {"PC1":{"client_ip":"192.168.86.59","last_seen":1732847113}}
+[2024-11-29 15:25:01] Current time: 15:25
+[2024-11-29 15:25:01] Downtime is not active.
+[2024-11-29 15:25:01] enforce_schedule execution complete.
+[2024-11-29 15:26:01] Starting enforce_schedule execution...
+[2024-11-29 15:26:01] Loading schedule file...
+[2024-11-29 15:26:01] Schedule: {"disable_time":"21:41","enable_time":"21:42"}
+[2024-11-29 15:26:01] Loading status file...
+[2024-11-29 15:26:01] Status: {"status":"unpaused"}
+[2024-11-29 15:26:01] Loading client IPs...
+[2024-11-29 15:26:01] Clients: {"PC1":{"client_ip":"192.168.86.59","last_seen":1732847113}}
+[2024-11-29 15:26:01] Current time: 15:26
+[2024-11-29 15:26:01] Downtime is not active.
+[2024-11-29 15:26:01] enforce_schedule execution complete.
+[2024-11-29 15:27:01] Starting enforce_schedule execution...
+[2024-11-29 15:27:01] Loading schedule file...
+[2024-11-29 15:27:01] Schedule: {"disable_time":"21:41","enable_time":"21:42"}
+[2024-11-29 15:27:01] Loading status file...
+[2024-11-29 15:27:01] Status: {"status":"unpaused"}
+[2024-11-29 15:27:01] Loading client IPs...
+[2024-11-29 15:27:01] Clients: {"PC1":{"client_ip":"192.168.86.59","last_seen":1732847113}}
+[2024-11-29 15:27:01] Current time: 15:27
+[2024-11-29 15:27:01] Downtime is not active.
+[2024-11-29 15:27:01] enforce_schedule execution complete.
+[2024-11-29 15:28:01] Starting enforce_schedule execution...
+[2024-11-29 15:28:01] Loading schedule file...
+[2024-11-29 15:28:01] Schedule: {"disable_time":"21:41","enable_time":"21:42"}
+[2024-11-29 15:28:01] Loading status file...
+[2024-11-29 15:28:01] Status: {"status":"unpaused"}
+[2024-11-29 15:28:01] Loading client IPs...
+[2024-11-29 15:28:01] Clients: {"PC1":{"client_ip":"192.168.86.59","last_seen":1732847113}}
+[2024-11-29 15:28:01] Current time: 15:28
+[2024-11-29 15:28:01] Downtime is not active.
+[2024-11-29 15:28:01] enforce_schedule execution complete.
+[2024-11-29 15:29:01] Starting enforce_schedule execution...
+[2024-11-29 15:29:01] Loading schedule file...
+[2024-11-29 15:29:01] Schedule: {"disable_time":"21:41","enable_time":"21:42"}
+[2024-11-29 15:29:01] Loading status file...
+[2024-11-29 15:29:01] Status: {"status":"unpaused"}
+[2024-11-29 15:29:01] Loading client IPs...
+[2024-11-29 15:29:01] Clients: {"PC1":{"client_ip":"192.168.86.59","last_seen":1732847113}}
+[2024-11-29 15:29:01] Current time: 15:29
+[2024-11-29 15:29:01] Downtime is not active.
+[2024-11-29 15:29:01] enforce_schedule execution complete.
+[2024-11-29 15:30:01] Starting enforce_schedule execution...
+[2024-11-29 15:30:01] Loading schedule file...
+[2024-11-29 15:30:01] Schedule: {"disable_time":"21:41","enable_time":"21:42"}
+[2024-11-29 15:30:01] Loading status file...
+[2024-11-29 15:30:01] Status: {"status":"unpaused"}
+[2024-11-29 15:30:01] Loading client IPs...
+[2024-11-29 15:30:01] Clients: {"PC1":{"client_ip":"192.168.86.59","last_seen":1732847113}}
+[2024-11-29 15:30:01] Current time: 15:30
+[2024-11-29 15:30:01] Downtime is not active.
+[2024-11-29 15:30:01] enforce_schedule execution complete.
+[2024-11-29 15:31:01] Starting enforce_schedule execution...
+[2024-11-29 15:31:01] Loading schedule file...
+[2024-11-29 15:31:01] Schedule: {"disable_time":"21:41","enable_time":"21:42"}
+[2024-11-29 15:31:01] Loading status file...
+[2024-11-29 15:31:01] Status: {"status":"unpaused"}
+[2024-11-29 15:31:01] Loading client IPs...
+[2024-11-29 15:31:01] Clients: {"PC1":{"client_ip":"192.168.86.59","last_seen":1732847113}}
+[2024-11-29 15:31:01] Current time: 15:31
+[2024-11-29 15:31:01] Downtime is not active.
+[2024-11-29 15:31:01] enforce_schedule execution complete.
+[2024-11-29 15:32:01] Starting enforce_schedule execution...
+[2024-11-29 15:32:01] Loading schedule file...
+[2024-11-29 15:32:01] Schedule: {"disable_time":"21:41","enable_time":"21:42"}
+[2024-11-29 15:32:01] Loading status file...
+[2024-11-29 15:32:01] Status: {"status":"unpaused"}
+[2024-11-29 15:32:01] Loading client IPs...
+[2024-11-29 15:32:01] Clients: {"PC1":{"client_ip":"192.168.86.59","last_seen":1732847113}}
+[2024-11-29 15:32:01] Current time: 15:32
+[2024-11-29 15:32:01] Downtime is not active.
+[2024-11-29 15:32:01] enforce_schedule execution complete.
+[2024-11-29 15:33:01] Starting enforce_schedule execution...
+[2024-11-29 15:33:01] Loading schedule file...
+[2024-11-29 15:33:01] Schedule: {"disable_time":"21:41","enable_time":"21:42"}
+[2024-11-29 15:33:01] Loading status file...
+[2024-11-29 15:33:01] Status: {"status":"unpaused"}
+[2024-11-29 15:33:01] Loading client IPs...
+[2024-11-29 15:33:01] Clients: {"PC1":{"client_ip":"192.168.86.59","last_seen":1732847113}}
+[2024-11-29 15:33:01] Current time: 15:33
+[2024-11-29 15:33:01] Downtime is not active.
+[2024-11-29 15:33:01] enforce_schedule execution complete.
+[2024-11-29 15:34:01] Starting enforce_schedule execution...
+[2024-11-29 15:34:01] Loading schedule file...
+[2024-11-29 15:34:01] Schedule: {"disable_time":"21:41","enable_time":"21:42"}
+[2024-11-29 15:34:01] Loading status file...
+[2024-11-29 15:34:01] Status: {"status":"unpaused"}
+[2024-11-29 15:34:01] Loading client IPs...
+[2024-11-29 15:34:01] Clients: {"PC1":{"client_ip":"192.168.86.59","last_seen":1732847113}}
+[2024-11-29 15:34:01] Current time: 15:34
+[2024-11-29 15:34:01] Downtime is not active.
+[2024-11-29 15:34:01] enforce_schedule execution complete.
+
+
+
+########## Code from: /var/www/html/timelimits/enforce_schedule.php ##########
+<?php
+// Enable error reporting for debugging
+error_reporting(E_ALL);
+ini_set('display_errors', 1);
+
+// File paths
+$scheduleFile = '/var/www/html/timelimits/schedule.json';
+$statusFile = '/var/www/html/timelimits/status.json';
+$clientIpFile = '/var/www/html/timelimits/client_ip.json';
+
+// Load files
+function loadFile($filePath, $default = []) {
+    return file_exists($filePath) ? json_decode(file_get_contents($filePath), true) : $default;
+}
+
+$schedule = loadFile($scheduleFile, ['disable_time' => '22:00', 'enable_time' => '06:00']);
+$status = loadFile($statusFile, ['status' => 'unpaused', 'manual' => false]);
+$clients = loadFile($clientIpFile);
+
+// Log messages for debugging
+function logMessage($message) {
+    error_log("[" . date("Y-m-d H:i:s") . "] $message\n", 3, "/var/log/timelimits.log");
+}
+
+// Send commands to the client
+function sendCommand($command, $clientIp) {
+    $socket = @socket_create(AF_INET, SOCK_STREAM, SOL_TCP);
+    if (!$socket) {
+        logMessage("Socket creation failed for $clientIp.");
+        return false;
+    }
+    if (!@socket_connect($socket, $clientIp, 65432)) {
+        logMessage("Failed to connect to client at $clientIp.");
+        socket_close($socket);
+        return false;
+    }
+    socket_write($socket, $command, strlen($command));
+    $response = @socket_read($socket, 1024);
+    socket_close($socket);
+
+    logMessage("Command '$command' sent to $clientIp. Response: $response");
+    return $response ?: "No response from client.";
+}
+
+// Get current time
+$currentTime = date("H:i");
+$downtimeActive = false;
+
+// Check if downtime is active
+if (($schedule['disable_time'] < $schedule['enable_time'] &&
+     $currentTime >= $schedule['disable_time'] &&
+     $currentTime < $schedule['enable_time']) ||
+    ($schedule['disable_time'] > $schedule['enable_time'] &&
+     ($currentTime >= $schedule['disable_time'] || $currentTime < $schedule['enable_time']))) {
+    $downtimeActive = true;
+}
+
+// Handle enforcement logic
+if ($status['manual']) {
+    logMessage("Manual mode is active. Skipping schedule enforcement.");
+} else {
+    foreach ($clients as $name => $client) {
+        $clientIp = $client['client_ip'];
+        if ($downtimeActive) {
+            // Downtime is active, enforce pause
+            sendCommand('pause', $clientIp);
+            $status['status'] = 'paused';
+        } else {
+            // Downtime ended, enforce unpause
+            sendCommand('unpause', $clientIp);
+            $status['status'] = 'unpaused';
+        }
+    }
+    file_put_contents($statusFile, json_encode($status));
+    logMessage("Schedule enforcement completed. Status: " . json_encode($status));
+}
+
+// Handle client reconnect during downtime
+foreach ($clients as $name => $client) {
+    $clientIp = $client['client_ip'];
+    if (isset($client['last_seen']) && (time() - $client['last_seen']) < 120) {
+        logMessage("Client $name ($clientIp) reconnected.");
+        if ($downtimeActive && $status['manual'] === false) {
+            sendCommand('pause', $clientIp);
+            logMessage("Downtime enforced for reconnected client $name.");
+        } elseif (!$downtimeActive && $status['manual'] === false) {
+            sendCommand('unpause', $clientIp);
+            logMessage("Downtime ended for reconnected client $name.");
+        }
+    }
+}
+?>
+
+
+
+########## Code from: /var/www/html/timelimits/heartbeat.php ##########
+<?php
+// File path to store client information
+$client_ip_file = '/var/www/html/timelimits/client_ip.json';
+
+// Read and decode incoming data
+$data = json_decode(file_get_contents("php://input"), true);
+
+// Log received data
+error_log("Heartbeat received: " . json_encode($data));
+
+// Validate incoming data
+if (isset($data['client_ip']) && filter_var($data['client_ip'], FILTER_VALIDATE_IP) && isset($data['name'])) {
+    // Load existing client data if the file exists
+    $clients = file_exists($client_ip_file) ? json_decode(file_get_contents($client_ip_file), true) : [];
+    
+    // Update or add the client information
+    $clients[$data['name']] = [
+        'client_ip' => $data['client_ip'],
+        'last_seen' => time(),
+    ];
+
+    // Save updated client data back to the JSON file
+    if (file_put_contents($client_ip_file, json_encode($clients, JSON_PRETTY_PRINT))) {
+        echo "Client IP updated.";
+    } else {
+        http_response_code(500);
+        echo "Failed to update client IP.";
+    }
+} else {
+    // Invalid data received
+    error_log("Invalid client data structure: " . json_encode($data));
+    http_response_code(400);
+    echo "Invalid client data.";
+}
+?>
+
+
+
+########## Code from: /var/www/html/timelimits/index.php ##########
+<?php
+// File paths
+$scheduleFile = '/var/www/html/timelimits/schedule.json'; // Schedule file
+$clientIpFile = '/var/www/html/timelimits/client_ip.json'; // Client IP storage
+$statusFile = '/var/www/html/timelimits/status.json'; // Internet status
+
+// Read schedule
+$schedule = file_exists($scheduleFile) ? json_decode(file_get_contents($scheduleFile), true) : ['disable_time' => '22:00', 'enable_time' => '06:00'];
+
+// Read clients
+$clients = file_exists($clientIpFile) ? json_decode(file_get_contents($clientIpFile), true) : [];
+
+// Read internet status
+$status = file_exists($statusFile) ? json_decode(file_get_contents($statusFile), true) : ['status' => 'unpaused', 'manual' => false];
+
+// Function to log messages for debugging
+function logMessage($message) {
+    error_log("[" . date("Y-m-d H:i:s") . "] $message\n", 3, "/var/log/timelimits.log");
+}
+
+// Function to send commands
+function sendCommand($command, $clientIp) {
+    $socket = @socket_create(AF_INET, SOCK_STREAM, SOL_TCP);
+    if (!$socket) {
+        logMessage("Socket creation failed for $clientIp.");
+        return false;
+    }
+
+    if (!@socket_connect($socket, $clientIp, 65432)) {
+        logMessage("Failed to connect to client at $clientIp.");
+        socket_close($socket);
+        return false;
+    }
+
+    socket_write($socket, $command, strlen($command));
+    $response = @socket_read($socket, 1024);
+    socket_close($socket);
+
+    logMessage("Command '$command' sent to $clientIp. Response: $response");
+    return $response ?: "No response from client.";
+}
+
+// Handle form submissions
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    if (isset($_POST['schedule'])) {
+        $schedule = [
+            'disable_time' => $_POST['disable_time'],
+            'enable_time' => $_POST['enable_time'],
+        ];
+        file_put_contents($scheduleFile, json_encode($schedule));
+        logMessage("Schedule updated to: " . json_encode($schedule));
+    } elseif (isset($_POST['command']) && isset($_POST['client_ip'])) {
+        $command = $_POST['command'];
+        $clientIp = $_POST['client_ip'];
+        sendCommand($command, $clientIp);
+
+        if ($command === 'pause' || $command === 'unpause') {
+            $status['status'] = $command === 'pause' ? 'paused' : 'unpaused';
+            $status['manual'] = $command === 'pause';
+            file_put_contents($statusFile, json_encode($status));
+            logMessage("Manual override: Status updated to: " . json_encode($status));
+        }
+    }
+    header("Location: " . $_SERVER['PHP_SELF']);
+    exit;
+}
+
+// Enforce downtime schedule only if no manual override
+$current_time = date('H:i');
+if (!$status['manual']) {
+    if ($current_time >= $schedule['disable_time'] && $current_time < $schedule['enable_time']) {
+        foreach ($clients as $name => $client) {
+            sendCommand('pause', $client['client_ip']);
+        }
+        $status['status'] = 'paused';
+    } else {
+        foreach ($clients as $name => $client) {
+            sendCommand('unpause', $client['client_ip']);
+        }
+        $status['status'] = 'unpaused';
+    }
+    file_put_contents($statusFile, json_encode($status));
+    logMessage("Schedule enforced. Status updated to: " . json_encode($status));
+}
+?>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Downtime Central</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            background-color: #f8f9fa;
+        }
+        .container {
+            max-width: 400px;
+            width: 100%;
+            padding: 20px;
+            box-sizing: border-box;
+            text-align: center;
+        }
+        h1 {
+            font-size: 24px;
+            margin-bottom: 20px;
+        }
+        .box {
+            border: 2px solid #ccc;
+            border-radius: 10px;
+            padding: 20px;
+            margin-bottom: 20px;
+            background: white;
+        }
+        .status {
+            font-size: 18px;
+            font-weight: bold;
+            color: #333;
+            margin-bottom: 20px;
+        }
+        button {
+            padding: 10px 20px;
+            font-size: 16px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            margin: 10px 0;
+        }
+        .btn-schedule {
+            background-color: #007bff;
+            color: white;
+        }
+        .btn-pause {
+            background-color: #dc3545;
+            color: white;
+        }
+        .btn-unpause {
+            background-color: #28a745;
+            color: white;
+        }
+        select {
+            padding: 10px;
+            font-size: 16px;
+            margin: 10px 0;
+            border: 1px solid #ccc;
+            border-radius: 5px;
+            width: 100%;
+        }
+        @media screen and (max-width: 480px) {
+            h1 {
+                font-size: 20px;
+            }
+            .status {
+                font-size: 16px;
+            }
+            button {
+                font-size: 14px;
+            }
+            select, input[type="time"] {
+                font-size: 14px;
+                padding: 8px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Downtime Central</h1>
+        <div class="status">
+            Current Status:
+            <span style="color: <?= ($status['status'] === 'paused') ? 'red' : (($status['status'] === 'unpaused') ? 'green' : 'orange') ?>">
+                <?= ucfirst($status['status']) ?>
+            </span>
+        </div>
+        <div class="box">
+            <h2>Schedule</h2>
+            <p><strong>Downtime On:</strong><br><?= $schedule['disable_time'] ?></p>
+            <p><strong>Downtime Off:</strong><br><?= $schedule['enable_time'] ?></p>
+            <form method="post">
+                <label for="disable_time">Downtime On:</label>
+                <input type="time" id="disable_time" name="disable_time" value="<?= $schedule['disable_time'] ?>"><br>
+                <label for="enable_time">Downtime Off:</label>
+                <input type="time" id="enable_time" name="enable_time" value="<?= $schedule['enable_time'] ?>"><br>
+                <button class="btn-schedule" type="submit" name="schedule">Set Schedule</button>
+            </form>
+        </div>
+        <div class="box">
+            <h2>Control Internet</h2>
+            <form method="post">
+                <label for="client_ip">Select Client:</label>
+                <select id="client_ip" name="client_ip">
+                    <?php foreach ($clients as $name => $client): ?>
+                        <option value="<?= htmlspecialchars($client['client_ip']) ?>"><?= htmlspecialchars($name) ?> (<?= htmlspecialchars($client['client_ip']) ?>)</option>
+                    <?php endforeach; ?>
+                </select><br>
+                <button class="btn-pause" type="submit" name="command" value="pause">Pause Internet</button>
+                <button class="btn-unpause" type="submit" name="command" value="unpause">Unpause Internet</button>
+            </form>
+        </div>
+    </div>
+</body>
+</html>
+
+
+
+########## Code from: /var/www/html/timelimits/listener.py ##########
+import socket
+import threading
+
+HOST = "0.0.0.0"
+PORT = 65432
+
+def handle_client(conn, addr):
+    print(f"[INFO] Connection established with {addr}")
+    while True:
+        data = conn.recv(1024)
+        if not data:
+            break
+        print(f"[INFO] Received from {addr}: {data.decode()}")
+        conn.sendall(b"ACK")
+    conn.close()
+    print(f"[INFO] Connection with {addr} closed.")
+
+def start_server():
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as server:
+        server.bind((HOST, PORT))
+        server.listen()
+        print(f"[INFO] Listening on {HOST}:{PORT}")
+        while True:
+            conn, addr = server.accept()
+            threading.Thread(target=handle_client, args=(conn, addr)).start()
+
+if __name__ == "__main__":
+    start_server()
+
+
+
+########## Code from: /var/www/html/timelimits/override.json ##########
+{"override":true}
+
+
+########## Code from: /var/www/html/timelimits/register_client.php ##########
+<?php
+// Path to client_ip.json
+$clientIpFile = '/var/www/html/timelimits/client_ip.json';
+
+// Read the raw POST data
+$rawData = file_get_contents('php://input');
+$data = json_decode($rawData, true);
+
+// Validate the incoming data
+if (!isset($data['client_ip'])) {
+    http_response_code(400);
+    echo "Invalid data: Missing client_ip.";
+    exit;
+}
+
+// Update the client_ip.json file
+$clientData = [
+    'client_ip' => $data['client_ip'],
+    'last_seen' => $data['last_seen'] ?? time() // Use provided last_seen or current time
+];
+
+file_put_contents($clientIpFile, json_encode($clientData));
+echo "Client data updated.";
+?>
+
+
+
+########## Code from: /var/www/html/timelimits/schedule.json ##########
+{"disable_time":"15:00","enable_time":"15:05"}
+
+
+########## Code from: /var/www/html/timelimits/schedule_log.txt ##########
+Internet paused automatically at 15:36.
+
+
+
+########## Code from: /var/www/html/timelimits/send_command.php ##########
+<?php
+function sendCommand($command) {
+    // Path to the file storing the client IP
+    $client_ip_file = '/var/www/html/timelimits/client_ip.json';
+
+    // Fetch the client IP
+    if (!file_exists($client_ip_file)) {
+        error_log("Client IP file not found.");
+        return "Client IP file not found.";
+    }
+
+    $client_data = json_decode(file_get_contents($client_ip_file), true);
+    if (json_last_error() !== JSON_ERROR_NONE) {
+        error_log("Error reading client IP file: " . json_last_error_msg());
+        return "Error reading client IP file.";
+    }
+
+    $client_ip = $client_data['client_ip'] ?? '192.168.86.100'; // Default fallback IP
+    $client_port = 65432;
+
+    // Debug: Show the client IP and port
+    echo "[DEBUG] Client IP: $client_ip, Port: $client_port<br>";
+
+    // Create a socket connection
+    $socket = @socket_create(AF_INET, SOCK_STREAM, SOL_TCP);
+    if (!$socket) {
+        error_log("Socket creation failed: " . socket_strerror(socket_last_error()));
+        return "Socket creation failed.";
+    }
+
+    // Set timeouts for the socket
+    socket_set_option($socket, SOL_SOCKET, SO_RCVTIMEO, ["sec" => 5, "usec" => 0]);
+    socket_set_option($socket, SOL_SOCKET, SO_SNDTIMEO, ["sec" => 5, "usec" => 0]);
+
+    // Attempt to connect to the client
+    if (!@socket_connect($socket, $client_ip, $client_port)) {
+        error_log("Socket connection failed to $client_ip:$client_port - " . socket_strerror(socket_last_error()));
+        return "Failed to connect to client.";
+    }
+
+    echo "[DEBUG] Connected to client.<br>";
+
+    // Send the command
+    socket_write($socket, $command, strlen($command));
+    echo "[DEBUG] Command sent: $command<br>";
+
+    // Read the response
+    $response = socket_read($socket, 1024);
+    echo "[DEBUG] Response from client: $response<br>";
+
+    // Close the socket
+    socket_close($socket);
+
+    return $response;
+}
+
+// Check if a command is provided via command-line arguments
+if ($argc > 1) {
+    $command = $argv[1]; // First argument after the script name
+
+    // Validate the command
+    $valid_commands = ['pause', 'unpause', 'schedule'];
+    if (!in_array($command, $valid_commands)) {
+        echo "Invalid command provided. Valid commands are: " . implode(", ", $valid_commands) . PHP_EOL;
+        exit(1);
+    }
+
+    $response = sendCommand($command);
+    echo $response . PHP_EOL;
+} else {
+    echo "No command provided." . PHP_EOL;
+}
+?>
+
+
+
+########## Code from: /var/www/html/timelimits/status.json ##########
+{"status":"unpaused","manual":false}
+
+
+########## Code from: /var/www/html/timelimits/timelimits-listener.service ##########
+[Unit]
+Description=Timelimits Listener
+After=network.target
+
+[Service]
+ExecStart=/usr/bin/python3 /var/www/html/timelimits/listener.py
+Restart=always
+User=www-data
+WorkingDirectory=/var/www/html/timelimits
+
+[Install]
+WantedBy=multi-user.target
+
+
+
