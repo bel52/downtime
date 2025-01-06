@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}Manage Clients{% endblock %}
+{% block content %}
+<h2>Clients</h2>
+<table class="table table-striped">
+    <thead>
+        <tr>
+            <th>Name</th>
+            <th>IP</th>
+            <th>Last Seen</th>
+            <th>Status</th>
+            <th>Action</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for client in clients %}
+        <tr>
+            <td>{{ client.name }}</td>
+            <td>{{ client.ip }}</td>
+            <td>{{ client.last_seen }}</td>
+            <td>{{ client.status }}</td>
+            <td>
+                <form action="/clients/control" method="post" class="d-inline">
+                    <input type="hidden" name="name" value="{{ client.name }}">
+                    <select name="action" class="form-select form-select-sm">
+                        <option value="pause">Pause</option>
+                        <option value="unpause">Unpause</option>
+                    </select>
+                    <button type="submit" class="btn btn-primary btn-sm">Submit</button>
+                </form>
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% endblock %}

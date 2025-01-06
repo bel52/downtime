@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Client Management Dashboard</title>
+    <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+    <header>
+        <h1>Client Management Dashboard</h1>
+    </header>
+    <main>
+        <table>
+            <thead>
+                <tr>
+                    <th>Name</th>
+                    <th>IP Address</th>
+                    <th>State</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+<tbody>
+    {% if clients %}
+        {% for client in clients %}
+        <tr>
+            <td>{{ client[0] }}</td> <!-- Name -->
+            <td>{{ client[1] }}</td> <!-- IP -->
+            <td>{{ client[2] }}</td> <!-- State -->
+            <td>
+                <form method="post" action="/block/{{ client[0] }}">
+                    <button type="submit">Block</button>
+                </form>
+                <form method="post" action="/unblock/{{ client[0] }}">
+                    <button type="submit">Unblock</button>
+                </form>
+            </td>
+        </tr>
+        {% endfor %}
+    {% else %}
+        <tr>
+            <td colspan="4">No clients found.</td>
+        </tr>
+    {% endif %}
+</tbody>
+        </table>
+    </main>
+</body>
+</html>
