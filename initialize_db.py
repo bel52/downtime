@@ -3,7 +3,6 @@ from contextlib import closing
 
 DB_PATH = "server.db"
 
-# Initialize database
 def init_db():
     with closing(sqlite3.connect(DB_PATH)) as conn, conn:
         conn.executescript(

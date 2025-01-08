@@ -19,26 +19,28 @@ if [ ! -d "$TARGET_DIR" ]; then
     exit 1
 fi
 
-# List directory structure and permissions, excluding venv, __pycache__ directories, .db files, and the output file
+# List directory structure and permissions, excluding specific directories and files
 {
     echo "Directory Structure and Permissions:"
     echo "-----------------------------------"
     find "$TARGET_DIR" \
         -path "$TARGET_DIR/venv" -prune -o \
         -path "*/__pycache__" -prune -o \
+        -path "*/.git" -prune -o \
         -name "$(basename "$OUTPUT_FILE")" -prune -o \
         -name "*.db" -prune -o \
         -exec ls -ld {} \;
     echo ""
 } >> "$OUTPUT_FILE"
 
-# Include file contents for all files, excluding venv, __pycache__ directories, .db files, and the output file
+# Include file contents for all files, excluding specific directories and files
 {
     echo "File Contents:"
     echo "-----------------------------------"
     find "$TARGET_DIR" \
         -path "$TARGET_DIR/venv" -prune -o \
         -path "*/__pycache__" -prune -o \
+        -path "*/.git" -prune -o \
         -name "$(basename "$OUTPUT_FILE")" -prune -o \
         -name "*.db" -prune -o \
         -type f -print | while IFS= read -r file; do

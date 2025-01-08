@@ -1,30 +1,32 @@
 Server Management Directory Report
-Generated on: Wed Jan  1 08:45:08 PM EST 2025
+Generated on: Tue Jan  7 12:47:50 PM EST 2025
 ===================================
 
 Directory Structure and Permissions:
 -----------------------------------
-drwxrwxr-x 8 brett brett 4096 Jan  1 18:54 /home/brett/server-management
+drwxrwxr-x 9 brett brett 4096 Jan  6 09:29 /home/brett/server-management
 drwxrwxr-x 2 brett brett 4096 Jan  1 12:19 /home/brett/server-management/templates
 -rw-rw-r-- 1 brett brett 1354 Dec 23 20:40 /home/brett/server-management/templates/manage.html
 -rw-rw-r-- 1 brett brett 960 Dec 22 16:02 /home/brett/server-management/templates/base.html
--rw-r--r-- 1 root root 5023 Dec 30 19:15 /home/brett/server-management/templates/dashboard.html
--rw-r--r-- 1 root root 1170 Dec 22 16:03 /home/brett/server-management/templates/clients.html
+-rw-r--r-- 1 brett brett 5023 Dec 30 19:15 /home/brett/server-management/templates/dashboard.html
+-rw-r--r-- 1 brett brett 1170 Dec 22 16:03 /home/brett/server-management/templates/clients.html
 drwxrwxr-x 4 brett brett 4096 Dec 27 22:10 /home/brett/server-management/migrations
 -rw-rw-r-- 1 brett brett 38 Dec 27 22:08 /home/brett/server-management/migrations/README
 -rw-rw-r-- 1 brett brett 635 Dec 27 22:08 /home/brett/server-management/migrations/script.py.mako
 drwxrwxr-x 2 brett brett 4096 Dec 27 22:08 /home/brett/server-management/migrations/versions
 -rw-rw-r-- 1 brett brett 2103 Dec 27 22:08 /home/brett/server-management/migrations/env.py
--rwxr-xr-x 1 root root 1804 Dec 25 18:34 /home/brett/server-management/generate_server_report.sh
--rw-r--r-- 1 root root 2762 Dec 22 15:54 /home/brett/server-management/organize_files.py
+-rwxr-xr-x 1 brett brett 1812 Jan  5 22:27 /home/brett/server-management/generate_server_report.sh
+-rw-r--r-- 1 brett brett 2762 Dec 22 15:54 /home/brett/server-management/organize_files.py
+-rw-r--r-- 1 root root 1624 Jan  5 20:31 /home/brett/server-management/README.md
 -rw-rw-r-- 1 brett brett 3705 Dec 27 22:10 /home/brett/server-management/alembic.ini
--rw-rw-r-- 1 brett brett 14355 Jan  1 18:26 /home/brett/server-management/app.py
--rw-r--r-- 1 root root 1051 Dec 31 09:17 /home/brett/server-management/initialize_db.py
-drwxr-xr-x 3 root root 4096 Dec 23 10:32 /home/brett/server-management/static
--rw-r--r-- 1 root root 591 Dec 23 10:32 /home/brett/server-management/static/styles.css
-drwxr-xr-x 2 root root 4096 Dec 22 16:04 /home/brett/server-management/static/css
+-rw-rw-r-- 1 brett brett 14668 Jan  6 09:23 /home/brett/server-management/app.py
+-rw-r--r-- 1 brett brett 1029 Jan  6 09:21 /home/brett/server-management/initialize_db.py
+drwxr-xr-x 3 brett brett 4096 Dec 23 10:32 /home/brett/server-management/static
+-rw-r--r-- 1 brett brett 591 Dec 23 10:32 /home/brett/server-management/static/styles.css
+drwxr-xr-x 2 brett brett 4096 Dec 22 16:04 /home/brett/server-management/static/css
 -rw-rw-r-- 1 brett brett 2243 Dec 23 17:40 /home/brett/server-management/db.py
 -rw-rw-r-- 1 brett brett 3311 Dec 27 12:19 /home/brett/server-management/scheduler.py
+-rw-rw-r-- 1 brett brett 6 Jan  5 20:24 /home/brett/server-management/.gitignore
 drwxrwxr-x 3 brett brett 4096 Dec 23 16:37 /home/brett/server-management/api
 -rw-rw-r-- 1 brett brett 1199 Dec 23 16:32 /home/brett/server-management/api/endpoints.py
 
@@ -430,26 +432,28 @@ if [ ! -d "$TARGET_DIR" ]; then
     exit 1
 fi
 
-# List directory structure and permissions, excluding venv, __pycache__ directories, .db files, and the output file
+# List directory structure and permissions, excluding specific directories and files
 {
     echo "Directory Structure and Permissions:"
     echo "-----------------------------------"
     find "$TARGET_DIR" \
         -path "$TARGET_DIR/venv" -prune -o \
         -path "*/__pycache__" -prune -o \
+        -path "*/.git" -prune -o \
         -name "$(basename "$OUTPUT_FILE")" -prune -o \
         -name "*.db" -prune -o \
         -exec ls -ld {} \;
     echo ""
 } >> "$OUTPUT_FILE"
 
-# Include file contents for all files, excluding venv, __pycache__ directories, .db files, and the output file
+# Include file contents for all files, excluding specific directories and files
 {
     echo "File Contents:"
     echo "-----------------------------------"
     find "$TARGET_DIR" \
         -path "$TARGET_DIR/venv" -prune -o \
         -path "*/__pycache__" -prune -o \
+        -path "*/.git" -prune -o \
         -name "$(basename "$OUTPUT_FILE")" -prune -o \
         -name "*.db" -prune -o \
         -type f -print | while IFS= read -r file; do
@@ -546,6 +550,49 @@ if __name__ == "__main__":
         print("File organization complete!")
     else:
         print("Operation canceled.")
+
+-----------------------------------
+File: /home/brett/server-management/README.md
+-----------------------------------
+# Downtime Monitoring Application
+
+This repository contains a Downtime Monitoring Application developed using PHP, Python, and Shell scripts. The application is designed to track the availability of various services and notify users of any downtime. It follows a server-client architecture meant to manage the downtime and internet access for Windows PCs. The functionality allows the user to set schedules for downtime and to manually pause and unpause the internet.
+
+## Features
+
+- **Service Monitoring**: Monitor the uptime and downtime of various services.
+- **Notification System**: Notify users via email or other communication channels when a service goes down.
+- **Logging**: Maintain logs of service availability for analysis and reporting.
+- **Dashboard**: Provide a web interface for viewing the status of monitored services.
+- **Downtime Management**: Set schedules for downtime and manage internet access for Windows PCs.
+- **Manual Control**: Manually pause and unpause the internet.
+
+## Technologies Used
+
+- **PHP**: 72.1% - Backend for the web interface and service monitoring.
+- **Python**: 27.5% - Scripts for monitoring and notifications.
+- **Shell**: 0.4% - Automation scripts for deployment and maintenance.
+
+## Installation
+
+Follow these steps to set up the application on your local machine.
+
+### Prerequisites
+
+- PHP 7.x or later
+- Python 3.x
+- Composer (for PHP dependencies)
+- pip (Python package installer)
+- Web server (e.g., Apache, Nginx)
+- MySQL or other supported databases
+
+### Steps
+
+1. **Clone the Repository**
+
+   ```bash
+   git clone https://github.com/bel52/downtime.git
+   cd downtime
 
 -----------------------------------
 File: /home/brett/server-management/alembic.ini
@@ -781,68 +828,66 @@ async def enforce_downtime():
 
 @app.websocket("/ws/{client_id}")
 async def websocket_endpoint(websocket: WebSocket, client_id: str, db: SessionLocal = Depends(get_db)):
+    """Handle WebSocket communication with clients."""
     await websocket.accept()
     logging.info(f"WebSocket connection established with client_id: {client_id}")
 
     try:
-        # Validate the provided client_id against the database
+        # Receive initial registration message
+        message = await websocket.receive_json()
+        client_name = message.get("name")
+        if not client_name:
+            raise ValueError("Client name is required.")
+
+        # Retrieve or create the client in the database
         client = db.query(Client).filter(Client.client_id == client_id).first()
-
-        if client:
-            # Known client: Update IP address and mark as active
-            logging.info(f"Reusing existing client_id: {client_id} for IP: {websocket.client.host}")
-            client.ip = websocket.client.host
-            client.last_heartbeat = datetime.datetime.utcnow()  # Update heartbeat on connect
+        if not client:
+            logging.warning(f"Unknown client_id: {client_id}. Registering client.")
+            client = Client(client_id=client_id, ip=websocket.client.host, name=client_name)
+            db.add(client)
             db.commit()
-        else:
-            # Unknown client_id: Treat as invalid and close the connection
-            logging.warning(f"Unknown client_id: {client_id}. Rejecting connection.")
-            await websocket.close(code=1008, reason="Invalid client_id")
-            return
+            logging.info(f"Client {client_id} registered with name {client_name}.")
 
-        # Track the WebSocket connection in the global dictionary
         connected_clients[client_id] = {"websocket": websocket, "queue": asyncio.Queue()}
 
-        # Main WebSocket message handling loop
         while True:
             try:
                 data = await websocket.receive_json()
                 logging.debug(f"Message received from client {client_id}: {data}")
-
-                # Handle "register" action
-                if data.get("action") == "register":
-                    client_id_from_client = data.get("client_id")
-                    if client_id_from_client != client_id:
-                        logging.warning(f"Client {client_id} tried to register with mismatched ID: {client_id_from_client}. Ignoring.")
-                        continue
-
-                # Handle other actions
-                elif data.get("action") == "state_update":
-                    client_state = data.get("state")
-                    logging.info(f"Client {client_id} state updated to: {client_state}")
-
-                elif data.get("action") == "update_name":
-                    new_name = data.get("new_name")
-                    if new_name:
-                        client.name = new_name
-                        db.commit()
-                        logging.info(f"Client {client_id} name updated to: {new_name}")
-                        await websocket.send_json({"action": "update_name", "new_name": new_name})
-
-                else:
-                    logging.warning(f"Unknown action received from client {client_id}: {data}")
-
             except Exception as e:
-                logging.error(f"Error processing message from client {client_id}: {e}")
+                logging.error(f"Error receiving message from client {client_id}: {e}")
+                break
 
+    except ValueError as e:
+        logging.error(f"Registration error: {e}")
+        await websocket.close()
     except WebSocketDisconnect:
-        logging.warning(f"Client {client_id} disconnected.")
+        logging.warning(f"WebSocket disconnected for client_id: {client_id}")
     except Exception as e:
-        logging.error(f"Error in WebSocket handler for client {client_id}: {e}")
+        logging.error(f"Unexpected error in WebSocket handler: {e}")
     finally:
-        # Clean up the connection from the global dictionary
         connected_clients.pop(client_id, None)
         db.close()
+
+@app.post("/clients/register")
+async def register_client(client_id: str, ip: str = Form(...), db: SessionLocal = Depends(get_db)):
+    """Register a new client or update an existing one."""
+    client = db.query(Client).filter(Client.client_id == client_id).first()
+    if client:
+        # Update the existing client's IP
+        client.ip = ip
+        client.last_heartbeat = datetime.datetime.utcnow()
+        db.commit()
+        logging.info(f"Updated existing client: {client_id}")
+    else:
+        # Create a new client
+        client = Client(client_id=client_id, ip=ip)
+        db.add(client)
+        db.commit()
+        logging.info(f"Registered new client: {client_id}")
+
+    return {"status": "success", "client_id": client_id}
+
 
 @app.get("/", response_class=HTMLResponse)
 async def dashboard(request: Request, db: SessionLocal = Depends(get_db)):
@@ -852,6 +897,21 @@ async def dashboard(request: Request, db: SessionLocal = Depends(get_db)):
     except Exception as e:
         logging.error(f"Failed to load dashboard: {e}")
         raise HTTPException(status_code=500, detail="Failed to load dashboard.")
+
+@app.get("/clients/test/{client_id}")
+async def test_client(client_id: str, db: SessionLocal = Depends(get_db)):
+    """Test if a client is registered and active."""
+    client = db.query(Client).filter(Client.client_id == client_id).first()
+    if not client:
+        return {"status": "error", "message": "Client not found."}
+    return {
+        "status": "success",
+        "client_id": client.client_id,
+        "ip": client.ip,
+        "state": client.state,
+        "last_heartbeat": client.last_heartbeat,
+    }
+
 
 @app.post("/clients/update_state")
 async def update_client_state(client_id: str, db: SessionLocal = Depends(get_db)):
@@ -896,23 +956,29 @@ async def control_client(pause: bool = Form(...), client_id: str = Form(...), db
     return RedirectResponse(url="/", status_code=303)
 
 @app.post("/heartbeat.php")
-async def heartbeat(client_id: str = Form(...), db: SessionLocal = Depends(get_db)):
+async def heartbeat(client_id: str = Form(...), name: str = Form(...), ip: str = Form(...), db: SessionLocal = Depends(get_db)):
     """Handle periodic heartbeat requests from clients."""
-    logging.debug(f"Received heartbeat from client_id: {client_id}")
     try:
+        logging.debug(f"Received heartbeat from client_id: {client_id}, name: {name}, ip: {ip}")
+
         client = db.query(Client).filter(Client.client_id == client_id).first()
         if not client:
-            logging.warning(f"Heartbeat received for unknown client_id: {client_id}")
-            raise HTTPException(status_code=404, detail="Client not found.")
+            logging.warning(f"Unknown client_id: {client_id}. Registering client.")
+            if not name:
+                raise HTTPException(status_code=400, detail="Client name is required.")
+            client = Client(client_id=client_id, ip=ip, name=name)
+            db.add(client)
+        else:
+            # Update existing client's last heartbeat and IP
+            client.last_heartbeat = datetime.datetime.utcnow()
+            client.ip = ip
 
-        # Update the last_heartbeat timestamp
-        client.last_heartbeat = datetime.datetime.utcnow()
         db.commit()
-
         logging.info(f"Heartbeat acknowledged for client_id: {client_id}")
         return {"status": "success", "message": "Heartbeat acknowledged."}
+
     except Exception as e:
-        logging.error(f"Error handling heartbeat for client_id: {client_id}, error: {e}")
+        logging.error(f"Error processing heartbeat for client_id: {client_id}, error: {e}")
         raise HTTPException(status_code=500, detail="Error processing heartbeat.")
 
 @app.post("/schedule")
@@ -1002,7 +1068,6 @@ from contextlib import closing
 
 DB_PATH = "server.db"
 
-# Initialize database
 def init_db():
     with closing(sqlite3.connect(DB_PATH)) as conn, conn:
         conn.executescript(
@@ -1238,6 +1303,11 @@ scheduler.start()
 # Ensure the scheduler is shutdown gracefully
 import atexit
 atexit.register(lambda: scheduler.shutdown())
+
+-----------------------------------
+File: /home/brett/server-management/.gitignore
+-----------------------------------
+venv/
 
 -----------------------------------
 File: /home/brett/server-management/api/endpoints.py
