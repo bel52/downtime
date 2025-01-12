@@ -1,10 +1,10 @@
 Server Management Directory Report
-Generated on: Tue Jan  7 12:47:50 PM EST 2025
+Generated on: Sat Jan 11 10:13:30 PM EST 2025
 ===================================
 
 Directory Structure and Permissions:
 -----------------------------------
-drwxrwxr-x 9 brett brett 4096 Jan  6 09:29 /home/brett/server-management
+drwxrwxr-x 9 brett brett 4096 Jan 11 16:10 /home/brett/server-management
 drwxrwxr-x 2 brett brett 4096 Jan  1 12:19 /home/brett/server-management/templates
 -rw-rw-r-- 1 brett brett 1354 Dec 23 20:40 /home/brett/server-management/templates/manage.html
 -rw-rw-r-- 1 brett brett 960 Dec 22 16:02 /home/brett/server-management/templates/base.html
@@ -16,19 +16,21 @@ drwxrwxr-x 4 brett brett 4096 Dec 27 22:10 /home/brett/server-management/migrati
 drwxrwxr-x 2 brett brett 4096 Dec 27 22:08 /home/brett/server-management/migrations/versions
 -rw-rw-r-- 1 brett brett 2103 Dec 27 22:08 /home/brett/server-management/migrations/env.py
 -rwxr-xr-x 1 brett brett 1812 Jan  5 22:27 /home/brett/server-management/generate_server_report.sh
+-rw-r--r-- 1 root root 5658 Jan 11 15:57 /home/brett/server-management/refactor.py
 -rw-r--r-- 1 brett brett 2762 Dec 22 15:54 /home/brett/server-management/organize_files.py
 -rw-r--r-- 1 root root 1624 Jan  5 20:31 /home/brett/server-management/README.md
 -rw-rw-r-- 1 brett brett 3705 Dec 27 22:10 /home/brett/server-management/alembic.ini
--rw-rw-r-- 1 brett brett 14668 Jan  6 09:23 /home/brett/server-management/app.py
--rw-r--r-- 1 brett brett 1029 Jan  6 09:21 /home/brett/server-management/initialize_db.py
+-rw-rw-r-- 1 brett brett 411 Jan 11 16:10 /home/brett/server-management/app.py
+-rw-r--r-- 1 brett brett 872 Jan 11 11:57 /home/brett/server-management/initialize_db.py
 drwxr-xr-x 3 brett brett 4096 Dec 23 10:32 /home/brett/server-management/static
 -rw-r--r-- 1 brett brett 591 Dec 23 10:32 /home/brett/server-management/static/styles.css
 drwxr-xr-x 2 brett brett 4096 Dec 22 16:04 /home/brett/server-management/static/css
--rw-rw-r-- 1 brett brett 2243 Dec 23 17:40 /home/brett/server-management/db.py
--rw-rw-r-- 1 brett brett 3311 Dec 27 12:19 /home/brett/server-management/scheduler.py
+-rw-rw-r-- 1 brett brett 2512 Jan 11 16:02 /home/brett/server-management/db.py
+-rw-r--r-- 1 root root 955 Jan 11 16:03 /home/brett/server-management/models.py
+-rw-rw-r-- 1 brett brett 401 Jan 11 16:06 /home/brett/server-management/scheduler.py
 -rw-rw-r-- 1 brett brett 6 Jan  5 20:24 /home/brett/server-management/.gitignore
-drwxrwxr-x 3 brett brett 4096 Dec 23 16:37 /home/brett/server-management/api
--rw-rw-r-- 1 brett brett 1199 Dec 23 16:32 /home/brett/server-management/api/endpoints.py
+drwxrwxr-x 3 brett brett 4096 Jan 11 17:49 /home/brett/server-management/api
+-rw-rw-r-- 1 brett brett 5259 Jan 11 17:49 /home/brett/server-management/api/endpoints.py
 
 File Contents:
 -----------------------------------
@@ -473,6 +475,183 @@ fi
 echo "Report generated: $OUTPUT_FILE"
 
 -----------------------------------
+File: /home/brett/server-management/refactor.py
+-----------------------------------
+import os
+import sys
+import subprocess
+from pathlib import Path
+
+# Directories and files
+BASE_DIR = Path(__file__).parent
+FILES = {
+    "app.py": """from fastapi import FastAPI
+from api.endpoints import router
+from scheduler import scheduler
+
+app = FastAPI()
+
+# Include all API endpoints
+app.include_router(router)
+
+@app.on_event("startup")
+async def startup_event():
+    scheduler.start()
+    print("Scheduler started and application is running.")
+""",
+    "models.py": """from sqlalchemy import Column, Integer, String, DateTime, ForeignKey
+from sqlalchemy.orm import relationship
+from datetime import datetime
+from db import Base
+
+class Client(Base):
+    __tablename__ = "clients"
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(String, unique=True, nullable=False)
+    ip = Column(String, nullable=False)
+    state = Column(String, default="unpaused")
+    registered_at = Column(DateTime, default=datetime.utcnow)
+    last_heartbeat = Column(DateTime)
+    schedules = relationship("Schedule", back_populates="client", cascade="all, delete-orphan")
+
+class Schedule(Base):
+    __tablename__ = "schedules"
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False)
+    disable_time = Column(String, nullable=False)
+    enable_time = Column(String, nullable=False)
+    client = relationship("Client", back_populates="schedules")
+""",
+    "api/endpoints.py": """from fastapi import APIRouter, HTTPException, Depends
+from sqlalchemy.orm import Session
+from pydantic import BaseModel
+from datetime import datetime
+from db import SessionLocal
+from models import Client, Schedule
+
+router = APIRouter()
+
+class ClientRegistration(BaseModel):
+    client_id: str
+    ip: str
+
+class HeartbeatUpdate(BaseModel):
+    client_id: str
+    ip: str
+
+class ScheduleUpdate(BaseModel):
+    client_id: str
+    disable_time: str
+    enable_time: str
+
+@router.post("/clients/register")
+async def register_client(data: ClientRegistration, db: Session = Depends(SessionLocal)):
+    try:
+        existing_client = db.query(Client).filter(Client.client_id == data.client_id).first()
+        if existing_client:
+            existing_client.ip = data.ip
+            existing_client.last_heartbeat = datetime.utcnow()
+        else:
+            new_client = Client(
+                client_id=data.client_id,
+                ip=data.ip,
+                state="unpaused",
+                registered_at=datetime.utcnow(),
+                last_heartbeat=datetime.utcnow()
+            )
+            db.add(new_client)
+        db.commit()
+        return {"status": "success", "client_id": data.client_id}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to register client: {str(e)}")
+
+@router.post("/clients/heartbeat")
+async def update_heartbeat(data: HeartbeatUpdate, db: Session = Depends(SessionLocal)):
+    try:
+        client = db.query(Client).filter(Client.client_id == data.client_id).first()
+        if not client:
+            raise HTTPException(status_code=404, detail="Client not registered.")
+        client.ip = data.ip
+        client.last_heartbeat = datetime.utcnow()
+        db.commit()
+        return {"status": "success"}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to update heartbeat: {str(e)}")
+
+@router.post("/schedule")
+async def set_schedule(data: ScheduleUpdate, db: Session = Depends(SessionLocal)):
+    try:
+        datetime.strptime(data.disable_time, "%H:%M")
+        datetime.strptime(data.enable_time, "%H:%M")
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid time format.")
+
+    client = db.query(Client).filter(Client.client_id == data.client_id).first()
+    if not client:
+        raise HTTPException(status_code=404, detail="Client not found.")
+
+    schedule = db.query(Schedule).filter(Schedule.client_id == client.id).first()
+    if schedule:
+        schedule.disable_time = data.disable_time
+        schedule.enable_time = data.enable_time
+    else:
+        schedule = Schedule(
+            client_id=client.id,
+            disable_time=data.disable_time,
+            enable_time=data.enable_time
+        )
+        db.add(schedule)
+
+    db.commit()
+    return {"status": "success"}
+""",
+    "scheduler.py": """from apscheduler.schedulers.asyncio import AsyncIOScheduler
+scheduler = AsyncIOScheduler()
+
+scheduler.start()
+"""
+}
+
+# Step 1: Write or Replace Files
+def write_files():
+    print("Writing files...")
+    for filename, content in FILES.items():
+        filepath = BASE_DIR / filename
+        filepath.parent.mkdir(parents=True, exist_ok=True)
+        with open(filepath, "w") as file:
+            file.write(content)
+    print("Files written successfully.")
+
+# Step 2: Install Dependencies
+def install_dependencies():
+    print("Installing dependencies...")
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "fastapi", "uvicorn", "sqlalchemy", "apscheduler"])
+    print("Dependencies installed.")
+
+# Step 3: Initialize Database
+def initialize_database():
+    print("Initializing database...")
+    from db import engine, Base
+    from models import Client, Schedule
+    Base.metadata.create_all(bind=engine)
+    print("Database initialized successfully.")
+
+# Step 4: Run Tests
+def run_tests():
+    print("Running basic tests...")
+    # Add client registration and scheduling test cases here
+    print("Tests completed.")
+
+if __name__ == "__main__":
+    write_files()
+    install_dependencies()
+    initialize_database()
+    run_tests()
+    print("Refactor complete.")
+
+-----------------------------------
 File: /home/brett/server-management/organize_files.py
 -----------------------------------
 import os
@@ -717,348 +896,19 @@ datefmt = %H:%M:%S
 -----------------------------------
 File: /home/brett/server-management/app.py
 -----------------------------------
-from fastapi import FastAPI, Request, Form, HTTPException, WebSocket, WebSocketDisconnect, Depends
-from fastapi.responses import RedirectResponse, HTMLResponse
-from fastapi.templating import Jinja2Templates
-from fastapi.staticfiles import StaticFiles
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy import create_engine
-from sqlalchemy.ext.declarative import declarative_base
-from sqlalchemy import Column, Integer, String, ForeignKey, DateTime
-from sqlalchemy.orm import relationship
-from pydantic import BaseModel
-import datetime
-import logging
-import json
-import asyncio
-import uuid
+from fastapi import FastAPI
+from api.endpoints import router
+from scheduler import start_scheduler  # Import the modified scheduler logic
 
-# Initialize FastAPI and database
 app = FastAPI()
-templates = Jinja2Templates(directory="templates")
-app.mount("/static", StaticFiles(directory="static"), name="static")
 
-DATABASE_URL = "sqlite:///server.db"
-engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-Base = declarative_base()
-
-# Global variable to store connected clients
-connected_clients = {}  # Format: {client_id: {"websocket": websocket, "queue": asyncio.Queue()}}
-
-# Define database models
-class Client(Base):
-    __tablename__ = "clients"
-    id = Column(Integer, primary_key=True, index=True)
-    name = Column(String, unique=True, nullable=False)
-    friendly_name = Column(String, nullable=True)
-    ip = Column(String, nullable=False)
-    state = Column(String, default="unpaused")
-    registered_at = Column(DateTime, default=datetime.datetime.utcnow)
-    last_heartbeat = Column(DateTime)
-    client_id = Column(String, unique=True, default=lambda: str(uuid.uuid4()))
-
-class Schedule(Base):
-    __tablename__ = "schedules"
-    id = Column(Integer, primary_key=True, index=True)
-    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False)
-    disable_time = Column(String, nullable=False)
-    enable_time = Column(String, nullable=False)
-    client = relationship("Client", back_populates="schedules")
-
-Client.schedules = relationship("Schedule", back_populates="client", cascade="all, delete-orphan")
-
-Base.metadata.create_all(bind=engine)
-
-# Dependency for database session
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
-
-# Pydantic models for WebSocket communication
-class WebSocketMessage(BaseModel):
-    action: str
-    status: str | None = None
+# Include all API endpoints
+app.include_router(router)
 
 @app.on_event("startup")
 async def startup_event():
-    """Startup event to initialize state enforcement."""
-    asyncio.create_task(enforce_downtime())
-
-async def enforce_downtime():
-    """Periodically enforce downtime schedules."""
-    while True:
-        db = SessionLocal()
-        try:
-            now = datetime.datetime.now().time()
-            schedules = db.query(Schedule).all()
-            for schedule in schedules:
-                client = db.query(Client).filter(Client.id == schedule.client_id).first()
-                if not client:
-                    continue
-
-                disable_time = datetime.datetime.strptime(schedule.disable_time, "%H:%M").time()
-                enable_time = datetime.datetime.strptime(schedule.enable_time, "%H:%M").time()
-                in_downtime = disable_time <= now <= enable_time or (
-                    disable_time > enable_time and (now >= disable_time or now <= enable_time)
-                )
-
-                if in_downtime and client.state != "paused":
-                    client.state = "paused"
-                    db.commit()
-                    client_info = connected_clients.get(client.client_id)
-                    if client_info:
-                        await client_info["websocket"].send_json({"action": "state_update", "paused": True})
-                        logging.debug(f"Sent state_update (paused=True) to client {client.client_id}")
-                elif not in_downtime and client.state != "unpaused":
-                    client.state = "unpaused"
-                    db.commit()
-                    client_info = connected_clients.get(client.client_id)
-                    if client_info:
-                        await client_info["websocket"].send_json({"action": "state_update", "paused": False})
-                        logging.debug(f"Sent state_update (paused=False) to client {client.client_id}")
-        except Exception as e:
-            logging.error(f"Error enforcing downtime: {e}")
-        finally:
-            db.close()
-        await asyncio.sleep(60)
-
-@app.websocket("/ws/{client_id}")
-async def websocket_endpoint(websocket: WebSocket, client_id: str, db: SessionLocal = Depends(get_db)):
-    """Handle WebSocket communication with clients."""
-    await websocket.accept()
-    logging.info(f"WebSocket connection established with client_id: {client_id}")
-
-    try:
-        # Receive initial registration message
-        message = await websocket.receive_json()
-        client_name = message.get("name")
-        if not client_name:
-            raise ValueError("Client name is required.")
-
-        # Retrieve or create the client in the database
-        client = db.query(Client).filter(Client.client_id == client_id).first()
-        if not client:
-            logging.warning(f"Unknown client_id: {client_id}. Registering client.")
-            client = Client(client_id=client_id, ip=websocket.client.host, name=client_name)
-            db.add(client)
-            db.commit()
-            logging.info(f"Client {client_id} registered with name {client_name}.")
-
-        connected_clients[client_id] = {"websocket": websocket, "queue": asyncio.Queue()}
-
-        while True:
-            try:
-                data = await websocket.receive_json()
-                logging.debug(f"Message received from client {client_id}: {data}")
-            except Exception as e:
-                logging.error(f"Error receiving message from client {client_id}: {e}")
-                break
-
-    except ValueError as e:
-        logging.error(f"Registration error: {e}")
-        await websocket.close()
-    except WebSocketDisconnect:
-        logging.warning(f"WebSocket disconnected for client_id: {client_id}")
-    except Exception as e:
-        logging.error(f"Unexpected error in WebSocket handler: {e}")
-    finally:
-        connected_clients.pop(client_id, None)
-        db.close()
-
-@app.post("/clients/register")
-async def register_client(client_id: str, ip: str = Form(...), db: SessionLocal = Depends(get_db)):
-    """Register a new client or update an existing one."""
-    client = db.query(Client).filter(Client.client_id == client_id).first()
-    if client:
-        # Update the existing client's IP
-        client.ip = ip
-        client.last_heartbeat = datetime.datetime.utcnow()
-        db.commit()
-        logging.info(f"Updated existing client: {client_id}")
-    else:
-        # Create a new client
-        client = Client(client_id=client_id, ip=ip)
-        db.add(client)
-        db.commit()
-        logging.info(f"Registered new client: {client_id}")
-
-    return {"status": "success", "client_id": client_id}
-
-
-@app.get("/", response_class=HTMLResponse)
-async def dashboard(request: Request, db: SessionLocal = Depends(get_db)):
-    try:
-        clients = db.query(Client).all()
-        return templates.TemplateResponse("dashboard.html", {"request": request, "clients": clients})
-    except Exception as e:
-        logging.error(f"Failed to load dashboard: {e}")
-        raise HTTPException(status_code=500, detail="Failed to load dashboard.")
-
-@app.get("/clients/test/{client_id}")
-async def test_client(client_id: str, db: SessionLocal = Depends(get_db)):
-    """Test if a client is registered and active."""
-    client = db.query(Client).filter(Client.client_id == client_id).first()
-    if not client:
-        return {"status": "error", "message": "Client not found."}
-    return {
-        "status": "success",
-        "client_id": client.client_id,
-        "ip": client.ip,
-        "state": client.state,
-        "last_heartbeat": client.last_heartbeat,
-    }
-
-
-@app.post("/clients/update_state")
-async def update_client_state(client_id: str, db: SessionLocal = Depends(get_db)):
-    """Manually update a client's state."""
-    client = db.query(Client).filter(Client.client_id == client_id).first()
-    if not client:
-        raise HTTPException(status_code=404, detail="Client not found.")
-    client_info = connected_clients.get(client.client_id)
-    if client_info:
-        schedule = client.schedules[0] if client.schedules else None
-        await client_info["websocket"].send_json(
-            {
-                "action": "state_update",
-                "paused": client.state == "paused",
-                "schedule": {
-                    "disable_time": schedule.disable_time if schedule else None,
-                    "enable_time": schedule.enable_time if schedule else None,
-                },
-            }
-        )
-    return {"status": "success"}
-
-@app.post("/control")
-async def control_client(pause: bool = Form(...), client_id: str = Form(...), db: SessionLocal = Depends(get_db)):
-    """Pause or unpause a client."""
-    client = db.query(Client).filter(Client.client_id == client_id).first()
-    if not client:
-        raise HTTPException(status_code=404, detail="Client not found.")
-    client.state = "paused" if pause else "unpaused"
-    db.commit()
-    logging.info(f"Client {client.name} state updated to {client.state}")
-
-    # Notify the client via WebSocket
-    client_info = connected_clients.get(client_id)
-    if client_info:
-        try:
-            await client_info["websocket"].send_json({"action": "state_update", "state": client.state})
-        except Exception as e:
-            logging.error(f"Failed to send state update to client {client_id}: {e}")
-            connected_clients.pop(client_id, None)
-
-    return RedirectResponse(url="/", status_code=303)
-
-@app.post("/heartbeat.php")
-async def heartbeat(client_id: str = Form(...), name: str = Form(...), ip: str = Form(...), db: SessionLocal = Depends(get_db)):
-    """Handle periodic heartbeat requests from clients."""
-    try:
-        logging.debug(f"Received heartbeat from client_id: {client_id}, name: {name}, ip: {ip}")
-
-        client = db.query(Client).filter(Client.client_id == client_id).first()
-        if not client:
-            logging.warning(f"Unknown client_id: {client_id}. Registering client.")
-            if not name:
-                raise HTTPException(status_code=400, detail="Client name is required.")
-            client = Client(client_id=client_id, ip=ip, name=name)
-            db.add(client)
-        else:
-            # Update existing client's last heartbeat and IP
-            client.last_heartbeat = datetime.datetime.utcnow()
-            client.ip = ip
-
-        db.commit()
-        logging.info(f"Heartbeat acknowledged for client_id: {client_id}")
-        return {"status": "success", "message": "Heartbeat acknowledged."}
-
-    except Exception as e:
-        logging.error(f"Error processing heartbeat for client_id: {client_id}, error: {e}")
-        raise HTTPException(status_code=500, detail="Error processing heartbeat.")
-
-@app.post("/schedule")
-async def set_schedule(client_id: str = Form(...), disable_time: str = Form(...), enable_time: str = Form(...), db: SessionLocal = Depends(get_db)):
-    """Set a downtime schedule for a client."""
-    client = db.query(Client).filter(Client.client_id == client_id).first()
-    if not client:
-        raise HTTPException(status_code=404, detail="Client not found.")
-    schedule = db.query(Schedule).filter(Schedule.client_id == client.id).first()
-    if not schedule:
-        schedule = Schedule(client_id=client.id, disable_time=disable_time, enable_time=enable_time)
-        db.add(schedule)
-    else:
-        schedule.disable_time = disable_time
-        schedule.enable_time = enable_time
-    db.commit()
-
-    client_websocket = connected_clients.get(client_id)
-    if client_websocket:
-        try:
-            await client_websocket.send_text(json.dumps({"schedule": {"disable_time": disable_time, "enable_time": enable_time}}))
-        except Exception:
-            logging.error(f"Failed to notify client {client.name} of schedule change.")
-    return RedirectResponse(url="/", status_code=303)
-
-@app.post("/clients/rename")
-async def rename_client(client_id: str = Form(...), new_name: str = Form(...), db: SessionLocal = Depends(get_db)):
-    """Rename a client."""
-    client = db.query(Client).filter(Client.client_id == client_id).first()
-    if not client:
-        raise HTTPException(status_code=404, detail="Client not found.")
-    if new_name != client.name and db.query(Client).filter(Client.friendly_name == new_name).first():
-        raise HTTPException(status_code=400, detail="Friendly name already in use.")
-    old_name = client.name
-    client.name = new_name
-    db.commit()
-
-    # Notify the client via WebSocket
-    client_info = connected_clients.get(client_id)
-    if client_info:
-        websocket = client_info.get("websocket")  # Retrieve the WebSocket object
-        if websocket:  # Ensure the WebSocket is still connected
-            try:
-                await websocket.send_json({"action": "update_name", "new_name": new_name})
-            except Exception as e:
-                logging.error(f"Failed to send name update to client {client_id}: {e}")
-                connected_clients.pop(client_id, None)
-
-    logging.info(f"Client renamed from '{old_name}' to '{new_name}'")
-    return RedirectResponse(url="/", status_code=303)
-
-@app.post("/clients/delete")
-async def delete_client(client_id: str = Form(...), db: SessionLocal = Depends(get_db)):
-    """Delete a client."""
-    client = db.query(Client).filter(Client.client_id == client_id).first()
-    if not client:
-        raise HTTPException(status_code=404, detail="Client not found.")
-    db.delete(client)
-    db.commit()
-    return RedirectResponse(url="/", status_code=303)
-
-async def handle_client_messages(client_id, websocket):
-    """Handle client WebSocket messages."""
-    while True:
-        try:
-            message = await connected_clients[client_id]["queue"].get()
-            for retry in range(3):
-                try:
-                    await websocket.send_json(message)
-                    logging.info(f"Sent message to client {client_id}: {message}")
-                    break
-                except Exception as e:
-                    if retry < 2:
-                        await asyncio.sleep(2 ** retry)
-                        continue
-                    logging.error(f"Failed to send message to client {client_id}: {e}")
-                    break
-        except Exception as e:
-            logging.error(f"Unexpected error in client message handling: {e}")
-            break
+    start_scheduler()  # Ensures the scheduler starts only if it is not already running
+    print("Scheduler started and application is running.")
 
 -----------------------------------
 File: /home/brett/server-management/initialize_db.py
@@ -1072,16 +922,16 @@ def init_db():
     with closing(sqlite3.connect(DB_PATH)) as conn, conn:
         conn.executescript(
             """
-            CREATE TABLE IF NOT EXISTS clients (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT UNIQUE NOT NULL,
-                friendly_name TEXT UNIQUE,
-                ip TEXT NOT NULL,
-                state TEXT DEFAULT 'unpaused',
-                registered_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                last_heartbeat DATETIME,
-                client_id TEXT UNIQUE NOT NULL
-            );
+CREATE TABLE IF NOT EXISTS clients (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    client_id TEXT UNIQUE NOT NULL,
+    friendly_name TEXT,
+    ip TEXT NOT NULL,
+    state TEXT DEFAULT 'unpaused',
+    registered_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    last_heartbeat DATETIME
+);
+
 
             CREATE TABLE IF NOT EXISTS schedules (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1140,169 +990,132 @@ button:hover {
 -----------------------------------
 File: /home/brett/server-management/db.py
 -----------------------------------
-import sqlite3
-from contextlib import closing
+from sqlalchemy import create_engine
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.exc import SQLAlchemyError
 
-DB_PATH = "server.db"
+# Define the database URL
+DATABASE_URL = "sqlite:///server.db"
 
-# Initialize database
-def init_db():
-    with closing(sqlite3.connect(DB_PATH)) as conn, conn:
-        conn.executescript("""
-        CREATE TABLE IF NOT EXISTS clients (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT UNIQUE NOT NULL,
-            ip TEXT NOT NULL,
-            state TEXT DEFAULT 'unpaused',
-            registered_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            last_heartbeat DATETIME
-        );
+# Create the SQLAlchemy engine
+engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
 
-        CREATE TABLE IF NOT EXISTS schedules (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            client_id INTEGER NOT NULL,
-            disable_time TEXT NOT NULL,
-            enable_time TEXT NOT NULL,
-            FOREIGN KEY (client_id) REFERENCES clients (id) ON DELETE CASCADE
-        );
-        """)
+# Define the declarative base
+Base = declarative_base()
 
-# Query utilities
-def execute_query(query, params=(), fetch_one=False, fetch_all=False):
+# Create a session factory
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+# Utility functions for database operations
+def get_db():
+    """
+    Dependency to get the database session.
+    Ensures proper cleanup after the session is used.
+    """
+    db = SessionLocal()
     try:
-        with closing(sqlite3.connect(DB_PATH)) as conn, conn:
-            cursor = conn.execute(query, params)
-            if fetch_one:
-                return cursor.fetchone()
-            if fetch_all:
-                return cursor.fetchall()
-            return cursor.lastrowid
-    except sqlite3.DatabaseError as e:
-        print(f"Database error: {e}")
-        return None
+        yield db
+    finally:
+        db.close()
 
-# Client-specific utilities
-def add_client(name, ip, state="unpaused"):
-    query = """
-    INSERT INTO clients (name, ip, state)
-    VALUES (?, ?, ?)
-    ON CONFLICT(name) DO UPDATE SET
-        ip = ?,
-        state = ?;
+# Helper functions for common database operations
+def add_client(client_id, ip, state="unpaused", db_session=None):
     """
-    execute_query(query, (name, ip, state, ip, state))
-
-def get_client_by_name(name):
-    query = "SELECT * FROM clients WHERE name = ?"
-    return execute_query(query, (name,), fetch_one=True)
-
-# Schedule-specific utilities
-def add_schedule(client_id, disable_time, enable_time):
-    query = """
-    INSERT INTO schedules (client_id, disable_time, enable_time)
-    VALUES (?, ?, ?);
+    Add a new client to the database.
     """
-    execute_query(query, (client_id, disable_time, enable_time))
+    from models import Client
+    try:
+        new_client = Client(client_id=client_id, ip=ip, state=state)
+        db_session.add(new_client)
+        db_session.commit()
+        return new_client
+    except SQLAlchemyError as e:
+        db_session.rollback()
+        raise e
 
-def get_schedule_by_client_name(name):
-    query = """
-    SELECT s.disable_time, s.enable_time
-    FROM schedules s
-    JOIN clients c ON s.client_id = c.id
-    WHERE c.name = ?;
+def get_client_by_id(client_id, db_session):
     """
-    return execute_query(query, (name,), fetch_one=True)
+    Retrieve a client by its unique client_id.
+    """
+    from models import Client
+    return db_session.query(Client).filter(Client.client_id == client_id).first()
+
+def get_all_clients(db_session):
+    """
+    Retrieve all clients from the database.
+    """
+    from models import Client
+    return db_session.query(Client).all()
+
+def add_schedule(client_id, disable_time, enable_time, db_session=None):
+    """
+    Add or update a schedule for a client.
+    """
+    from models import Schedule
+    try:
+        schedule = db_session.query(Schedule).filter(Schedule.client_id == client_id).first()
+        if schedule:
+            schedule.disable_time = disable_time
+            schedule.enable_time = enable_time
+        else:
+            schedule = Schedule(client_id=client_id, disable_time=disable_time, enable_time=enable_time)
+            db_session.add(schedule)
+        db_session.commit()
+        return schedule
+    except SQLAlchemyError as e:
+        db_session.rollback()
+        raise e
+
+def get_schedule_by_client_id(client_id, db_session):
+    """
+    Retrieve the schedule for a specific client.
+    """
+    from models import Schedule
+    return db_session.query(Schedule).filter(Schedule.client_id == client_id).first()
+
+-----------------------------------
+File: /home/brett/server-management/models.py
+-----------------------------------
+from sqlalchemy import Column, Integer, String, DateTime, ForeignKey
+from sqlalchemy.orm import relationship
+from datetime import datetime
+from db import Base
+
+class Client(Base):
+    __tablename__ = "clients"
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(String, unique=True, nullable=False)
+    ip = Column(String, nullable=False)
+    state = Column(String, default="unpaused")
+    registered_at = Column(DateTime, default=datetime.utcnow)
+    last_heartbeat = Column(DateTime)
+    schedules = relationship("Schedule", back_populates="client", cascade="all, delete-orphan")
+
+class Schedule(Base):
+    __tablename__ = "schedules"
+    id = Column(Integer, primary_key=True, index=True)
+    client_id = Column(Integer, ForeignKey("clients.id"), nullable=False)
+    disable_time = Column(String, nullable=False)
+    enable_time = Column(String, nullable=False)
+    client = relationship("Client", back_populates="schedules")
 
 -----------------------------------
 File: /home/brett/server-management/scheduler.py
 -----------------------------------
-import asyncio
-import json
 from apscheduler.schedulers.background import BackgroundScheduler
-from datetime import datetime
-from fastapi import APIRouter, WebSocket
-from typing import Dict
+import logging
 
-# Router for FastAPI endpoints
-router = APIRouter()
-
-# Connected WebSocket clients
-connected_clients: Dict[str, WebSocket] = {}
-
-# Existing schedules
-SCHEDULES = {
-    "PC1": {"disable_time": "22:00", "enable_time": "06:00"},
-}
-
-async def rebroadcast_schedules():
-    """Periodically rebroadcast the schedules to all connected clients."""
-    while True:
-        for client_name, schedule in SCHEDULES.items():
-            if client_name in connected_clients:
-                try:
-                    await connected_clients[client_name].send(json.dumps({"schedule": schedule}))
-                    print(f"Schedule rebroadcast to {client_name}: {schedule}")
-                except Exception as e:
-                    print(f"Failed to send schedule to {client_name}: {e}")
-        await asyncio.sleep(300)  # Rebroadcast every 5 minutes
-
-
-@router.post("/schedule")
-async def update_schedule(client_name: str, disable_time: str, enable_time: str):
-    """Update the downtime schedule for a client."""
-    if client_name in SCHEDULES:
-        SCHEDULES[client_name]["disable_time"] = disable_time
-        SCHEDULES[client_name]["enable_time"] = enable_time
-    else:
-        SCHEDULES[client_name] = {"disable_time": disable_time, "enable_time": enable_time}
-    print(f"Schedule updated for {client_name}: {SCHEDULES[client_name]}")
-    return {"status": "success", "schedule": SCHEDULES[client_name]}
-
-
-@router.websocket("/ws/{client_name}")
-async def websocket_endpoint(client_name: str, websocket: WebSocket):
-    """Handle WebSocket connections from clients."""
-    await websocket.accept()
-    connected_clients[client_name] = websocket
-    print(f"{client_name} connected via WebSocket.")
-
-    # Send the initial schedule upon connection
-    if client_name in SCHEDULES:
-        try:
-            await websocket.send(json.dumps({"schedule": SCHEDULES[client_name]}))
-            print(f"Initial schedule sent to {client_name}: {SCHEDULES[client_name]}")
-        except Exception as e:
-            print(f"Failed to send initial schedule to {client_name}: {e}")
-
-    try:
-        while True:
-            message = await websocket.receive_text()
-            print(f"Message received from {client_name}: {message}")
-            data = json.loads(message)
-
-            # Handle resync request
-            if data.get("action") == "resync":
-                if client_name in SCHEDULES:
-                    await websocket.send(json.dumps({"schedule": SCHEDULES[client_name]}))
-                    print(f"Resync schedule sent to {client_name}: {SCHEDULES[client_name]}")
-
-    except Exception as e:
-        print(f"WebSocket connection with {client_name} closed: {e}")
-
-    finally:
-        if client_name in connected_clients:
-            del connected_clients[client_name]
-        print(f"{client_name} disconnected.")
-
-
-# Background scheduler for periodic tasks
+# Create a single instance of the scheduler
 scheduler = BackgroundScheduler()
-scheduler.add_job(rebroadcast_schedules, "interval", seconds=300)  # Rebroadcast every 5 minutes
-scheduler.start()
 
-# Ensure the scheduler is shutdown gracefully
-import atexit
-atexit.register(lambda: scheduler.shutdown())
+def start_scheduler():
+    """Start the scheduler if not already running."""
+    if not scheduler.running:
+        scheduler.start()
+        logging.info("Scheduler started.")
+    else:
+        logging.info("Scheduler is already running.")
 
 -----------------------------------
 File: /home/brett/server-management/.gitignore
@@ -1312,46 +1125,140 @@ venv/
 -----------------------------------
 File: /home/brett/server-management/api/endpoints.py
 -----------------------------------
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Depends
+from sqlalchemy.orm import Session
 from pydantic import BaseModel
-from db import (
-    add_client,
-    get_client_by_name,
-    execute_query
-)
+from datetime import datetime
+from db import SessionLocal
+from models import Client, Schedule
+from fastapi import WebSocket, WebSocketDisconnect
+import logging
 
-# Define your API router
+# Connected WebSocket clients dictionary
+connected_clients = {}
 router = APIRouter()
 
-# Models
-class Client(BaseModel):
-    name: str
+class ClientRegistration(BaseModel):
+    client_id: str
     ip: str
-    state: str = "unpaused"  # Default state
 
-# Register a client
+class HeartbeatUpdate(BaseModel):
+    client_id: str
+    ip: str
+
+class ScheduleUpdate(BaseModel):
+    client_id: str
+    disable_time: str
+    enable_time: str
+
 @router.post("/clients/register")
-async def register_client(client: Client):
-    """
-    Registers a new client or updates an existing client's IP and state.
-    """
-    add_client(client.name, client.ip, client.state)
-    return {"status": "success", "message": "Client registered successfully."}
+async def register_client(data: ClientRegistration, db: Session = Depends(SessionLocal)):
+    try:
+        existing_client = db.query(Client).filter(Client.client_id == data.client_id).first()
+        if existing_client:
+            existing_client.ip = data.ip
+            existing_client.last_heartbeat = datetime.utcnow()
+        else:
+            new_client = Client(
+                client_id=data.client_id,
+                ip=data.ip,
+                state="unpaused",
+                registered_at=datetime.utcnow(),
+                last_heartbeat=datetime.utcnow()
+            )
+            db.add(new_client)
+        db.commit()
+        return {"status": "success", "client_id": data.client_id}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to register client: {str(e)}")
 
-# Update client's heartbeat
 @router.post("/clients/heartbeat")
-async def update_heartbeat(client: Client):
-    """
-    Updates the last known heartbeat and state for a client.
-    """
-    db_client = get_client_by_name(client.name)
-    if not db_client:
-        return {"error": "Client not registered."}
-    query = """
-    UPDATE clients
-    SET ip = ?, state = ?, last_heartbeat = CURRENT_TIMESTAMP
-    WHERE name = ?
-    """
-    execute_query(query, (client.ip, client.state, client.name))
-    return {"status": "success", "message": "Heartbeat updated successfully."}
+async def update_heartbeat(data: HeartbeatUpdate, db: Session = Depends(SessionLocal)):
+    try:
+        client = db.query(Client).filter(Client.client_id == data.client_id).first()
+        if not client:
+            raise HTTPException(status_code=404, detail="Client not registered.")
+        client.ip = data.ip
+        client.last_heartbeat = datetime.utcnow()
+        db.commit()
+        return {"status": "success"}
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Failed to update heartbeat: {str(e)}")
+
+@router.post("/schedule")
+async def set_schedule(data: ScheduleUpdate, db: Session = Depends(SessionLocal)):
+    try:
+        datetime.strptime(data.disable_time, "%H:%M")
+        datetime.strptime(data.enable_time, "%H:%M")
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid time format.")
+
+    client = db.query(Client).filter(Client.client_id == data.client_id).first()
+    if not client:
+        raise HTTPException(status_code=404, detail="Client not found.")
+
+    schedule = db.query(Schedule).filter(Schedule.client_id == client.id).first()
+    if schedule:
+        schedule.disable_time = data.disable_time
+        schedule.enable_time = data.enable_time
+    else:
+        schedule = Schedule(
+            client_id=client.id,
+            disable_time=data.disable_time,
+            enable_time=data.enable_time
+        )
+        db.add(schedule)
+
+    db.commit()
+    return {"status": "success"}
+
+@router.websocket("/ws/{client_id}")
+async def websocket_endpoint(client_id: str, websocket: WebSocket, db: Session = Depends(SessionLocal)):
+    """Handle WebSocket connections for real-time updates."""
+    await websocket.accept()
+    try:
+        # Validate the client_id exists
+        client = db.query(Client).filter(Client.client_id == client_id).first()
+        if not client:
+            await websocket.close(code=1008)
+            logging.error(f"WebSocket connection denied: Client {client_id} not found.")
+            return
+        
+        connected_clients[client_id] = websocket
+        logging.info(f"WebSocket connected: {client_id}")
+        
+        while True:
+            # Listen for incoming messages if required
+            message = await websocket.receive_json()
+            logging.info(f"Received message from {client_id}: {message}")
+
+    except WebSocketDisconnect:
+        logging.warning(f"WebSocket disconnected: {client_id}")
+    except Exception as e:
+        logging.error(f"WebSocket error for {client_id}: {e}")
+    finally:
+        # Clean up WebSocket connection
+        connected_clients.pop(client_id, None)
+        logging.info(f"WebSocket connection closed for client {client_id}.")
+
+@router.get("/clients/state/{client_id}")
+async def get_client_state(client_id: str, db: Session = Depends(SessionLocal)):
+    """Fetch the current state of a client."""
+    client = db.query(Client).filter(Client.client_id == client_id).first()
+    if not client:
+        raise HTTPException(status_code=404, detail="Client not found.")
+    return {"client_id": client.client_id, "state": client.state}
+
+@router.get("/clients/schedule/{client_id}")
+async def get_client_schedule(client_id: str, db: Session = Depends(SessionLocal)):
+    """Fetch the schedule for a client."""
+    client = db.query(Client).filter(Client.client_id == client_id).first()
+    if not client:
+        raise HTTPException(status_code=404, detail="Client not found.")
+    schedule = db.query(Schedule).filter(Schedule.client_id == client.id).first()
+    if not schedule:
+        raise HTTPException(status_code=404, detail="Schedule not found.")
+    return {"disable_time": schedule.disable_time, "enable_time": schedule.enable_time}
 

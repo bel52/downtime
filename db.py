@@ -1,72 +1,83 @@
-import sqlite3
-from contextlib import closing
+from sqlalchemy import create_engine
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.exc import SQLAlchemyError
 
-DB_PATH = "server.db"
+# Define the database URL
+DATABASE_URL = "sqlite:///server.db"
 
-# Initialize database
-def init_db():
-    with closing(sqlite3.connect(DB_PATH)) as conn, conn:
-        conn.executescript("""
-        CREATE TABLE IF NOT EXISTS clients (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT UNIQUE NOT NULL,
-            ip TEXT NOT NULL,
-            state TEXT DEFAULT 'unpaused',
-            registered_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            last_heartbeat DATETIME
-        );
+# Create the SQLAlchemy engine
+engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
 
-        CREATE TABLE IF NOT EXISTS schedules (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            client_id INTEGER NOT NULL,
-            disable_time TEXT NOT NULL,
-            enable_time TEXT NOT NULL,
-            FOREIGN KEY (client_id) REFERENCES clients (id) ON DELETE CASCADE
-        );
-        """)
+# Define the declarative base
+Base = declarative_base()
 
-# Query utilities
-def execute_query(query, params=(), fetch_one=False, fetch_all=False):
+# Create a session factory
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+# Utility functions for database operations
+def get_db():
+    """
+    Dependency to get the database session.
+    Ensures proper cleanup after the session is used.
+    """
+    db = SessionLocal()
     try:
-        with closing(sqlite3.connect(DB_PATH)) as conn, conn:
-            cursor = conn.execute(query, params)
-            if fetch_one:
-                return cursor.fetchone()
-            if fetch_all:
-                return cursor.fetchall()
-            return cursor.lastrowid
-    except sqlite3.DatabaseError as e:
-        print(f"Database error: {e}")
-        return None
+        yield db
+    finally:
+        db.close()
 
-# Client-specific utilities
-def add_client(name, ip, state="unpaused"):
-    query = """
-    INSERT INTO clients (name, ip, state)
-    VALUES (?, ?, ?)
-    ON CONFLICT(name) DO UPDATE SET
-        ip = ?,
-        state = ?;
+# Helper functions for common database operations
+def add_client(client_id, ip, state="unpaused", db_session=None):
     """
-    execute_query(query, (name, ip, state, ip, state))
-
-def get_client_by_name(name):
-    query = "SELECT * FROM clients WHERE name = ?"
-    return execute_query(query, (name,), fetch_one=True)
-
-# Schedule-specific utilities
-def add_schedule(client_id, disable_time, enable_time):
-    query = """
-    INSERT INTO schedules (client_id, disable_time, enable_time)
-    VALUES (?, ?, ?);
+    Add a new client to the database.
     """
-    execute_query(query, (client_id, disable_time, enable_time))
+    from models import Client
+    try:
+        new_client = Client(client_id=client_id, ip=ip, state=state)
+        db_session.add(new_client)
+        db_session.commit()
+        return new_client
+    except SQLAlchemyError as e:
+        db_session.rollback()
+        raise e
 
-def get_schedule_by_client_name(name):
-    query = """
-    SELECT s.disable_time, s.enable_time
-    FROM schedules s
-    JOIN clients c ON s.client_id = c.id
-    WHERE c.name = ?;
+def get_client_by_id(client_id, db_session):
     """
-    return execute_query(query, (name,), fetch_one=True)
+    Retrieve a client by its unique client_id.
+    """
+    from models import Client
+    return db_session.query(Client).filter(Client.client_id == client_id).first()
+
+def get_all_clients(db_session):
+    """
+    Retrieve all clients from the database.
+    """
+    from models import Client
+    return db_session.query(Client).all()
+
+def add_schedule(client_id, disable_time, enable_time, db_session=None):
+    """
+    Add or update a schedule for a client.
+    """
+    from models import Schedule
+    try:
+        schedule = db_session.query(Schedule).filter(Schedule.client_id == client_id).first()
+        if schedule:
+            schedule.disable_time = disable_time
+            schedule.enable_time = enable_time
+        else:
+            schedule = Schedule(client_id=client_id, disable_time=disable_time, enable_time=enable_time)
+            db_session.add(schedule)
+        db_session.commit()
+        return schedule
+    except SQLAlchemyError as e:
+        db_session.rollback()
+        raise e
+
+def get_schedule_by_client_id(client_id, db_session):
+    """
+    Retrieve the schedule for a specific client.
+    """
+    from models import Schedule
+    return db_session.query(Schedule).filter(Schedule.client_id == client_id).first()
